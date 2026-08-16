@@ -58,6 +58,26 @@ function enabled() {
       requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);
+    // longtask 监测：浏览器原生报告「>50ms 的长任务」，直接点名阻塞归属
+    // （如 spellcheck / 渲染 / 脚本）。关掉拼写检查后这里应不再出现 >500ms 的脚本长任务。
+    if (typeof PerformanceObserver !== "undefined") {
+      try {
+        const obs = new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) {
+            if (e.duration >= 500) {
+              let who = "script";
+              try {
+                const a = e.attribution && e.attribution[0];
+                if (a) who = a.name || a.containerType || a.containerSrc || "unknown";
+              } catch (_) {}
+              // eslint-disable-next-line no-console
+              console.log(`[PERF-LONGTASK] 长任务 ${e.duration.toFixed(0)}ms 归属=${who}`);
+            }
+          }
+        });
+        obs.observe({ entryTypes: ["longtask"] });
+      } catch (_) {}
+    }
   }
   return _enabled;
 }

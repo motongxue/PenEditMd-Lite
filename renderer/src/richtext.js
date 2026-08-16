@@ -137,6 +137,10 @@ const BLOCK_TAGS = new Set([
 ]);
 
 export function createRichEditor({ el, onChange, onInput }) {
+  // 关闭浏览器内置拼写检查：它与中文输入法(IME)组词逐帧重绘严重冲突，
+  // 会在每个组词更新时反复跑拼写扫描，导致「英文流畅、中文组词卡」且主线程被反复堵 ~1s
+  // （拼写检查是浏览器内部行为，JS 计时看不出、也没有对应 JS 循环）。HTML 已设 spellcheck=false，这里再强制一次。
+  el.spellcheck = false;
   let lastMarkdown = "";
   let composing = false; // 中文输入法组合中
   let cachedMd = ""; // getValue 的序列化结果缓存：DOM 未变时直接复用，避免每次按键全量 turndown
