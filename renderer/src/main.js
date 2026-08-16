@@ -1718,6 +1718,7 @@ function attachScrollSync() {
   const drive = (from, getTo) => () => {
     if (state.mode !== "split") return; // 非分屏没有联动的必要
     if (from.classList.contains("hidden")) return;
+    if (window.__peneditComposing) return; // 中文组词期不做滚动联动：syncFromTo 会读 scrollHeight（强制布局），与输入法抢主线程
     if (scrollOwner && scrollOwner !== from) return; // 这次滚动是被对方带动的，忽略
     scrollOwner = from;
     clearTimeout(scrollOwnerTimer);

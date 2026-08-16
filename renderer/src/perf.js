@@ -11,6 +11,7 @@
 let _last = 0;
 let _enabled = null;
 let _heartbeat = false;
+let _lastStage = "(none)"; // 最后一个 perfStage 名称：心跳检测到阻塞时打印，定位冻结紧跟哪步
 
 function enabled() {
   if (_enabled === null) {
@@ -30,7 +31,7 @@ function enabled() {
       // 正常间隔≈250ms；若明显更大，说明两次心跳之间主线程被长时间阻塞
       if (gap > 400) {
         // eslint-disable-next-line no-console
-        console.log(`[PERF-HEARTBEAT] 主线程被卡 ${gap.toFixed(0)}ms（正常应≈250ms）`);
+        console.log(`[PERF-HEARTBEAT] 主线程被卡 ${gap.toFixed(0)}ms（正常应≈250ms）← 阻塞前最后阶段: ${_lastStage}`);
       }
     }, 250);
     // 帧率探针：连续监测每帧耗时。打字/滚动时若出现 >32ms 的帧（掉到 <30fps），
@@ -78,6 +79,26 @@ function enabled() {
         obs.observe({ entryTypes: ["longtask"] });
       } catch (_) {}
     }
+    // MessageChannel 心跳探针：0 延迟宏任务循环，测量「发出→接收」的间隔。
+    // 它会被任何主线程阻塞延迟——包括 IME 组词处理（这类输入处理 Chromium 的 longtask 不报告，
+    // 所以单独用这个探针兜底）。>200ms 即判定阻塞，打印延迟与阻塞前最后阶段。
+    if (typeof MessageChannel !== "undefined") {
+      try {
+        const ch = new MessageChannel();
+        let pingT = 0;
+        ch.port2.onmessage = () => {
+          const dt = performance.now() - pingT;
+          if (dt > 200) {
+            // eslint-disable-next-line no-console
+            console.log(`[PERF-PING] 主线程阻塞 ${dt.toFixed(0)}ms ← 阻塞前最后阶段: ${_lastStage}`);
+          }
+          pingT = performance.now();
+          ch.port1.postMessage(0);
+        };
+        pingT = performance.now();
+        ch.port1.postMessage(0);
+      } catch (_) {}
+    }
   }
   return _enabled;
 }
@@ -92,6 +113,7 @@ export function perfStage(name) {
   if (!enabled()) return;
   const now = performance.now();
   const dt = _last ? (now - _last).toFixed(1) : "0.0";
+  _lastStage = name; // 记下最后阶段，心跳阻塞时打印，用于定位冻结紧跟哪步
   // eslint-disable-next-line no-console
   console.log(`[PERF] ${name}  +${dt}ms`);
   _last = now;

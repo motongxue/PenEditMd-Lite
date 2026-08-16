@@ -1424,9 +1424,10 @@ export function createRichEditor({ el, onChange, onInput }) {
   onRich("click", onRichClick);
   onRich("dblclick", onRichDblClick);
   onRich("paste", onPaste);
-  onRich("compositionstart", () => (composing = true));
+  onRich("compositionstart", () => { composing = true; window.__peneditComposing = true; });
   onRich("compositionend", () => {
     composing = false;
+    window.__peneditComposing = false;
     // 改为防抖同步，而非在组词结束的同步调用里对整篇文档跑 turndown：
     // 否则每打一个中文词都要卡一次（整篇 HTML→Markdown 序列化阻塞主线程）。
     // 预览渲染另有「空闲闸门」保护，不会在打字过程中冻结界面。
