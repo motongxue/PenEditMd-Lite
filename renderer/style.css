@@ -651,6 +651,13 @@ body {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* 富文本编辑器不用 position:absolute：absolute 定位的 contenteditable 会让 Chromium
+   延迟 IME 组词的绘制（组词下划线/文字迟迟不显示，敲空格后才跳出）。
+   改为 position:relative，仍保留 overflow-y:auto 自身滚动（滚动同步不变），组词绘制可立即提交。 */
+.rich-input {
+  position: relative;
+  inset: auto;
+}
 .source-input {
   resize: none;
   font-family: var(--doc-mono);
