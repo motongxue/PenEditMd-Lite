@@ -270,6 +270,9 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // 关闭 Electron 进程级拼写检查服务：它会在每次 IME 组词更新时跑拼写扫描，
+      // 与输入法抢主线程导致中文组词卡顿（HTML 的 spellcheck=false 属性关不掉这个服务）。
+      spellcheck: false,
     },
   };
   mainWindow = new BrowserWindow(winOpts);
