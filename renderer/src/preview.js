@@ -22,6 +22,7 @@ import { getImageById, isDocImageLight } from "./imageStore.js";
 import { useMathExtensions, decorateMath } from "./math.js";
 import { useFootnoteExtensions, assignHeadingIds } from "./extras.js";
 import mermaid from "mermaid";
+import { perfStage } from "./perf.js";
 
 marked.setOptions({
   gfm: true,
@@ -303,6 +304,7 @@ let renderToken = 0;
  */
 export async function renderMarkdownInto(container, md) {
   const token = ++renderToken; // 每次渲染自增；旧渲染在让出点检测到 token 变化即放弃
+  perfStage("renderMarkdownInto start(" + (md || "").length + "字)");
   const { sections, headings } = prepare(md);
   // 全局轻量判定：整篇图片总字节 ≤ 阈值才内嵌（按全篇算，不能按段）。
   // 翻转为内嵌/折叠时，所有段都应重渲染，故把 inline 编入段缓存键。
@@ -339,4 +341,5 @@ export async function renderMarkdownInto(container, md) {
   finalizeTOC(container);
   container.scrollTop = savedScroll;
   renderMermaidIn(container); // 渲染 Mermaid 图（异步，不阻塞主渲染）
+  perfStage("renderMarkdownInto done(" + sections.length + " sections)");
 }

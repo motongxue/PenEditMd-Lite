@@ -12,6 +12,7 @@ import "../tmplComponents.css";
 import { createEditor } from "./editor.js";
 import { buildToolbar, setToolbarEnabled } from "./toolbar.js";
 import { renderMarkdownInto, bindAnchorClick, reinitMermaid, renderRawHtml } from "./preview.js";
+import { perfReset, perfStage } from "./perf.js";
 import { expandMarkdown, getImageById, shrinkMarkdown, isDocImageLight, snapshotImages, restoreImages, replaceImage } from "./imageStore.js";
 import { buildExportHtml } from "./exporter.js";
 import {
@@ -314,9 +315,11 @@ function scheduleSessionSave() {
   if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
   sessionSaveTimer = setTimeout(() => {
     sessionSaveTimer = null;
+    perfStage("sessionSave → IPC(含全部图片 base64)");
     try {
       window.api.sessionSave(sessionSnapshot());
     } catch (_) {}
+    perfStage("sessionSave done");
   }, 800);
 }
 
@@ -1174,6 +1177,7 @@ function onEditorChange(md) {
   }
   // #7：内容变更后防抖备份会话，关窗后也能恢复
   scheduleSessionSave();
+  perfStage("onEditorChange(md=" + (md || "").length + "字)");
 }
 
 /** 只更新当前文件在左侧列表中的徽标与脏标记（onChange 高频调用，必须轻量） */
@@ -1619,6 +1623,7 @@ function scheduleRender() {
   renderTimer = setTimeout(renderPreview, delay);
 }
 async function renderPreview() {
+  perfStage("renderPreview start");
   if (state.mode === "source") return; // 仅编辑区时不渲染，省性能
   // AI 排版结果直接在分屏预览展示（替代弹出预览）：注入已净化的内联 HTML
   if (state.previewAi && pubState.aiHtml != null) {
@@ -1691,6 +1696,7 @@ function activeEditorEl() {
 }
 
 function syncFromTo(from, to) {
+  perfStage("scrollSync(" + from.className + "→" + to.className + ")");
   const fMax = from.scrollHeight - from.clientHeight;
   const tMax = to.scrollHeight - to.clientHeight;
   if (tMax <= 0) return;
@@ -3938,6 +3944,7 @@ function resetFind() {
   findState.previewIndex = -1;
   richIndex.version = -1;
   rowCache.version = -1;
+  if (els.preview) clearPreviewFindHighlight(); // 关掉查找时清掉预览高亮
   updateFindStatus("");
 }
 
@@ -4156,6 +4163,56 @@ function buildPreviewFindMatches() {
   return matches;
 }
 
+/* ---------- 预览查找高亮 ---------- */
+function clearPreviewFindHighlight() {
+  els.preview.querySelectorAll("mark.find-hl").forEach((m) => {
+    const parent = m.parentNode;
+    if (parent) parent.replaceChild(document.createTextNode(m.textContent), m);
+  });
+}
+
+/** 高亮预览里「第 pidx 个」匹配（与编辑器独立计数）。
+ *  用 <mark> 包裹匹配文本片段；mark 不增加文本长度，故不会扰动匹配坐标。 */
+function highlightPreviewMatch(pidx) {
+  if (state.mode === "source") return;
+  if (els.preview.classList.contains("hidden")) return;
+  clearPreviewFindHighlight();
+  const matches = buildPreviewFindMatches();
+  if (!matches.length) return;
+  if (pidx == null) pidx = findState.previewIndex;
+  if (pidx < 0 || pidx >= matches.length) pidx = 0;
+  const [s, e] = matches[pidx];
+  // 收集匹配范围内的文本节点片段（一个匹配可能跨多个文本节点）
+  const walker = document.createTreeWalker(els.preview, NodeFilter.SHOW_TEXT);
+  const parts = [];
+  let node, pos = 0;
+  while ((node = walker.nextNode())) {
+    const len = node.nodeValue.length;
+    const a = Math.max(s, pos);
+    const b = Math.min(e, pos + len);
+    if (a < b) parts.push({ node, start: a - pos, end: b - pos });
+    pos += len;
+  }
+  // 从后往前替换，避免前面的替换使后面的偏移失效
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const { node, start, end } = parts[i];
+    const full = node.nodeValue;
+    const before = full.slice(0, start);
+    const mid = full.slice(start, end);
+    const after = full.slice(end);
+    const parent = node.parentNode;
+    if (!parent) continue;
+    const frag = document.createDocumentFragment();
+    if (before) frag.appendChild(document.createTextNode(before));
+    const mark = document.createElement("mark");
+    mark.className = "find-hl";
+    mark.textContent = mid;
+    frag.appendChild(mark);
+    if (after) frag.appendChild(document.createTextNode(after));
+    parent.replaceChild(frag, node);
+  }
+}
+
 function scrollPreviewToMatch(pidx) {
   if (state.mode === "source") return; // 源码模式没有预览
   if (els.preview.classList.contains("hidden")) return; // 预览不可见则无需定位
@@ -4188,6 +4245,7 @@ function scrollPreviewToMatch(pidx) {
     const delta = (rect.top - prect.top) - prect.height / 2 + rect.height / 2;
     els.preview.scrollTop += delta;
   } catch (_) { /* 忽略个别极端节点的定位失败 */ }
+  highlightPreviewMatch(pidx); // 高亮当前匹配（修 #预览查找无高亮）
 }
 
 /* ---------- 匹配收集 ---------- */

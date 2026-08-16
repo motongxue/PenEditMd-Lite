@@ -1332,6 +1332,15 @@ body.focus-mode .filelist { display: none; }
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* 预览查找高亮：当前匹配项用醒目底色，其余匹配（若将来需要）可用 .find-hl-other */
+mark.find-hl {
+  background: #ffd54a;
+  color: #1a1a1a;
+  border-radius: 2px;
+  padding: 0 1px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
 .img-expanded {
   max-width: 100%;
   height: auto;

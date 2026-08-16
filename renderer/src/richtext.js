@@ -25,6 +25,7 @@ import {
 } from "./math.js";
 import { useFootnoteExtensions, footnoteTurndownRules } from "./extras.js";
 import { matchAction } from "./settings.js";
+import { perfReset, perfStage } from "./perf.js";
 
 // 配置 marked：高亮代码块、GFM
 marked.use({
@@ -155,6 +156,7 @@ export function createRichEditor({ el, onChange, onInput }) {
   // 输入事件走防抖：连续打字只在停顿后序列化一次，主线程不再被 turndown 占满，
   // 光标/字符就能即时显示（修 #输入卡顿）。命令式改动（加粗/粘贴/插入等）仍走同步 triggerChange。
   function scheduleTrigger() {
+    perfReset(); // 性能埋点：以本次输入为时间线起点
     onInput?.(); // 始终上报输入时刻（含中文组词中）：供预览渲染的「空闲闸门」正确生效，
                  // 否则 lastEditorInputAt 停在组词前，闸门失效、打字中仍会重渲染冻结主线程。
     if (composing) return; // 组词中：不序列化、不触发 onChange，等 compositionend 统一处理
@@ -674,6 +676,7 @@ export function createRichEditor({ el, onChange, onInput }) {
   function getValue() {
     // 缓存：DOM 未变时直接返回上次的序列化结果，避免每次按键都全量 turndown 整篇文档（修 #输入卡顿）。
     if (!domDirty) return cachedMd;
+    perfStage("getValue: serialize start");
     // 关键：<textarea> 序列化成 HTML 时用的是「默认值」（子文本节点），不是用户输入后的 value。
     // 不同步的话，用户在代码块里敲的内容永远不会进入 markdown（改了等于没改）。
     // 把 value 写回 defaultValue 即可更新子文本节点；因为控件已 dirty，不会反过来重置 value/光标。
@@ -685,6 +688,7 @@ export function createRichEditor({ el, onChange, onInput }) {
     // 去掉末尾由我们添加的空白段落，避免无限追加换行
     html = html.replace(/<p><br\s*\/?><\/p>\s*$/i, "");
     cachedMd = turndown.turndown(html).trim();
+    perfStage("getValue: turndown done(" + html.length + " chars)");
     domDirty = false;
     return cachedMd;
   }
