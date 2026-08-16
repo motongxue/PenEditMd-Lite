@@ -29,6 +29,7 @@ export function createEditor({ type = "richtext", ta, rich, onChange, onInput })
  * 源码编辑器：基于原生 textarea，带 base64 图片占位符折叠。
  */
 function createSourceEditor({ ta, onChange, onInput }) {
+  let composing = false; // 中文输入法组合中：组词期不触发 triggerChange，避免每个拼音字母都跑 onEditorChange 链
   function triggerChange() {
     // 直接传当前（已折叠为 @img: 占位符的）源码。
     // 千万不要在这里 expandMarkdown：一旦展开成 11MB base64，
@@ -289,7 +290,17 @@ function createSourceEditor({ ta, onChange, onInput }) {
     srcBound[type] = handler;
     ta.addEventListener(type, handler);
   };
-  onSrc("input", () => { onInput?.(); triggerChange(); });
+  onSrc("input", () => {
+    onInput?.(); // 始终上报输入时刻（含组词中）：供预览渲染的「空闲闸门」正确生效
+    if (composing) return; // 组词中：不触发 triggerChange，等 compositionend 统一处理
+    triggerChange();
+  });
+  onSrc("compositionstart", () => { composing = true; window.__peneditComposing = true; });
+  onSrc("compositionend", () => {
+    composing = false;
+    window.__peneditComposing = false;
+    triggerChange();
+  });
   onSrc("keydown", onKeydown);
 
   return {
