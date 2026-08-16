@@ -1514,6 +1514,11 @@ app.on("second-instance", (_e, argv) => {
 });
 
 // ---- 生命周期 ----
+// 诊断开关：关闭硬件加速，验证中文 IME 组词卡顿是否来自 GPU 合成与输入法冲突。
+// （日志实证：组词期出现 12~24 秒单帧、无 JS 运行、spellcheck 已关/CSS 干净/无循环——
+//  典型的 Electron/Chromium GPU 与 IME 冲突。若关闭后组词顺畅即确诊。）
+// 确诊后可改为更精细的 commandLine.appendSwitch('disable-features', ...) 只关问题特性。
+app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
   loadPrefs(); // 载入偏好（关闭窗口行为等），须早于 buildAppMenu 以正确回显单选项
   buildAppMenu(); // 原生窗口菜单栏（文件/编辑/视图/设置/帮助）
