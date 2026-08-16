@@ -1083,6 +1083,15 @@ ipcMain.handle("session:save", (event, payload) => {
     const toSave = payload && typeof payload === "object" && !Array.isArray(payload)
       ? payload
       : { files: payload || [] };
+    // 图片不随正文频繁保存：images 为 null 时保留磁盘上已有的图片映射，
+    // 避免每次打字都把全部 base64 经 IPC 序列化一遍、主线程被堵 ~500ms（见 #打字卡顿）。
+    if (toSave.images == null) {
+      try {
+        const raw = fs.readFileSync(sessionFile(), "utf-8");
+        const prev = raw ? JSON.parse(raw) : null;
+        if (prev && prev.images) toSave.images = prev.images;
+      } catch (_) { /* 旧文件不存在/损坏则不带图片 */ }
+    }
     fs.writeFileSync(sessionFile(), JSON.stringify(toSave), "utf-8");
     return true;
   } catch (_) {

@@ -20,6 +20,10 @@ const BASE64_IMG_RE = /!\[([^\]]*)\]\((data:image\/[a-zA-Z0-9+.-]+;base64,[a-zA-
 let nextId = 0;
 const map = new Map(); // id -> { dataUri, filename }
 
+// 图片是否相对「上次快照」发生变化。未变化时正文频繁自动保存无需再搬运整包 base64，
+// 否则每张截图几 MB，每次停手都把全部图片经 IPC 序列化发往主进程，主线程被堵 ~500ms（见 #打字卡顿）。
+let imagesDirty = true;
+
 function extFromMime(mime) {
   const m = mime.match(/image\/(\w+)/);
   if (!m) return "png";
@@ -37,10 +41,18 @@ function makeFilename(alt, dataUri) {
 export function resetImageStore() {
   nextId = 0;
   map.clear();
+  imagesDirty = true;
 }
 
-/** 会话恢复用：把内存中的图片映射导出为可序列化的快照 */
+// 图片是否相对「上次快照」发生变化。未变化时正文频繁自动保存无需再搬运整包 base64，
+// 否则每张截图几 MB，每次停手都把全部图片经 IPC 序列化发往主进程，主线程被堵 ~500ms（见 #打字卡顿）。
+
+/** 会话恢复用：把内存中的图片映射导出为可序列化的快照。
+ *  未变化（imagesDirty=false）时返回 null，由主进程保留磁盘上已有的图片，
+ *  从而避免「每次打字都重写整包 base64」造成的主线程阻塞。 */
 export function snapshotImages() {
+  if (!imagesDirty) return null;
+  imagesDirty = false;
   return {
     nextId,
     images: Array.from(map.entries()).map(([id, item]) => ({ id, filename: item.filename, dataUri: item.dataUri })),
@@ -56,6 +68,7 @@ export function restoreImages(snapshot) {
       map.set(Number(id), { dataUri, filename });
     });
   }
+  imagesDirty = false; // 刚从磁盘恢复，尚未改动，无需立刻回写
 }
 
 export function registerImage(dataUri, alt = "") {
@@ -65,6 +78,7 @@ export function registerImage(dataUri, alt = "") {
   const filename = makeFilename(alt, dataUri);
   const id = nextId++;
   map.set(id, { dataUri, filename });
+  imagesDirty = true; // 新增图片：下次快照需重新搬运
   return `@img:${id}:${filename}`;
 }
 
@@ -94,6 +108,7 @@ export function replaceImage(id, dataUri, filename) {
     dataUri,
     filename: filename || map.get(numId).filename || makeFilename("", dataUri),
   });
+  imagesDirty = true; // 图片数据被替换，下次快照需重新搬运
   return true;
 }
 
