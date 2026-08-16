@@ -3927,6 +3927,7 @@ const findState = {
   key: "",
   matches: [], // [[start,end], ...] 相对"被搜索文本"的下标
   index: -1,
+  previewIndex: -1, // 预览自身的匹配序号（与编辑器独立计数，见 scrollPreviewToMatch）
   undo: [], // [{ md, label }]
 };
 
@@ -3934,6 +3935,7 @@ function resetFind() {
   findState.key = "";
   findState.matches = [];
   findState.index = -1;
+  findState.previewIndex = -1;
   richIndex.version = -1;
   rowCache.version = -1;
   updateFindStatus("");
@@ -4154,16 +4156,18 @@ function buildPreviewFindMatches() {
   return matches;
 }
 
-function scrollPreviewToMatch() {
+function scrollPreviewToMatch(pidx) {
   if (state.mode === "source") return; // 源码模式没有预览
   if (els.preview.classList.contains("hidden")) return; // 预览不可见则无需定位
   const matches = buildPreviewFindMatches();
   if (!matches.length) return;
-  // 与编辑器侧的 findState.index 对齐：用户点「下一个」时预览也前进到对应匹配。
-  let i = findState.index;
-  if (i < 0 || i >= matches.length) i = 0;
-  const [s, e] = matches[i];
-  // 在预览文本节点里定位 [s,e]，构造 Range 并滚到视口中央
+  // 用「预览自己的」匹配序号，而不是编辑器的 findState.index：
+  // 编辑器文本含 Markdown 语法、预览是渲染后的文本，两者匹配数量/顺序并不一致，
+  // 拿编辑器序号去索引预览数组会错位甚至越界（表现为"点下一个预览纹丝不动"）。
+  if (pidx == null) pidx = findState.previewIndex;
+  if (pidx < 0 || pidx >= matches.length) pidx = 0;
+  const [s, e] = matches[pidx];
+  // 在预览文本节点里定位 [s,e]，构造 Range
   const walker = document.createTreeWalker(els.preview, NodeFilter.SHOW_TEXT);
   let node, pos = 0, startNode = null, startOff = 0, endNode = null, endOff = 0;
   while ((node = walker.nextNode())) {
@@ -4177,7 +4181,12 @@ function scrollPreviewToMatch() {
   try {
     range.setStart(startNode, startOff);
     range.setEnd(endNode, endOff);
-    range.scrollIntoView({ block: "center" }); // 浏览器自动滚到正确滚动容器（#preview）
+    // 手动滚动 #preview：比 range.scrollIntoView 更可控，避免被外层容器"吞掉"滚动，
+    // 把匹配行滚到预览视口中央。
+    const rect = range.getBoundingClientRect();
+    const prect = els.preview.getBoundingClientRect();
+    const delta = (rect.top - prect.top) - prect.height / 2 + rect.height / 2;
+    els.preview.scrollTop += delta;
   } catch (_) { /* 忽略个别极端节点的定位失败 */ }
 }
 
@@ -4214,14 +4223,14 @@ function collectMatches() {
   return findState.matches;
 }
 
-function gotoMatch(i) {
+function gotoMatch(i, pidx) {
   const list = findState.matches;
   if (!list.length) return;
   findState.index = ((i % list.length) + list.length) % list.length;
   const [s, e] = list[findState.index];
   if (state.editorType === "source") selectInSource(s, e);
   else selectInRich(s, e);
-  scrollPreviewToMatch(); // 预览也定位到匹配处（修 #预览查找不定位）
+  scrollPreviewToMatch(pidx); // 预览也定位到「它自己的」第 N 个匹配（修 #预览查找不定位）
   updateFindStatus(`第 ${findState.index + 1} / ${list.length} 个匹配`);
 }
 
@@ -4237,7 +4246,20 @@ function findStep(dir) {
     updateFindStatus("无匹配");
     return;
   }
-  gotoMatch(findState.index < 0 ? (dir > 0 ? 0 : list.length - 1) : findState.index + dir);
+  // 编辑器匹配序号
+  let idx = findState.index < 0 ? (dir > 0 ? 0 : list.length - 1) : findState.index + dir;
+  idx = ((idx % list.length) + list.length) % list.length;
+  // 预览匹配序号（与编辑器各自独立计数，避免文本不一致导致错位）
+  const pmatches = buildPreviewFindMatches();
+  if (pmatches.length) {
+    let pidx = findState.previewIndex < 0
+      ? (dir > 0 ? 0 : pmatches.length - 1)
+      : findState.previewIndex + dir;
+    findState.previewIndex = ((pidx % pmatches.length) + pmatches.length) % pmatches.length;
+  } else {
+    findState.previewIndex = -1;
+  }
+  gotoMatch(idx, findState.previewIndex);
   restoreFindFocus();
 }
 
@@ -4420,12 +4442,14 @@ function bindFind() {
   ["input", "change"].forEach((ev) => {
     els.findInput.addEventListener(ev, () => {
       findState.index = -1;
+      findState.previewIndex = -1;
       previewFindCache.key = ""; // 预览匹配缓存随之失效，下次重新收集
     });
   });
   [els.findRegex, els.findCase, els.findWord].forEach((c) =>
     c.addEventListener("change", () => {
       findState.index = -1;
+      findState.previewIndex = -1;
       previewFindCache.key = "";
     })
   );

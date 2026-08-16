@@ -155,8 +155,9 @@ export function createRichEditor({ el, onChange, onInput }) {
   // 输入事件走防抖：连续打字只在停顿后序列化一次，主线程不再被 turndown 占满，
   // 光标/字符就能即时显示（修 #输入卡顿）。命令式改动（加粗/粘贴/插入等）仍走同步 triggerChange。
   function scheduleTrigger() {
-    if (composing) return;
-    onInput?.(); // 上报输入时刻，供预览渲染做「空闲才渲」闸门，避免打字期间冻结主线程
+    onInput?.(); // 始终上报输入时刻（含中文组词中）：供预览渲染的「空闲闸门」正确生效，
+                 // 否则 lastEditorInputAt 停在组词前，闸门失效、打字中仍会重渲染冻结主线程。
+    if (composing) return; // 组词中：不序列化、不触发 onChange，等 compositionend 统一处理
     domDirty = true; // 标记脏：刷新前若外部取 getValue，也返回最新 DOM 而非旧缓存
     if (inputTimer) clearTimeout(inputTimer);
     inputTimer = setTimeout(() => { inputTimer = null; triggerChange(); }, 150);
@@ -1418,7 +1419,10 @@ export function createRichEditor({ el, onChange, onInput }) {
   onRich("compositionstart", () => (composing = true));
   onRich("compositionend", () => {
     composing = false;
-    triggerChange();
+    // 改为防抖同步，而非在组词结束的同步调用里对整篇文档跑 turndown：
+    // 否则每打一个中文词都要卡一次（整篇 HTML→Markdown 序列化阻塞主线程）。
+    // 预览渲染另有「空闲闸门」保护，不会在打字过程中冻结界面。
+    scheduleTrigger();
   });
 
   /* ---- 右键菜单用到的基础能力 ---- */
