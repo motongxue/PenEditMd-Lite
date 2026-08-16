@@ -2385,7 +2385,10 @@ function bindSelectionStyleBar() {
       bar.classList.add("hidden");
     });
   });
-  const onSel = () => updateSelBar(bar);
+  // 中文输入法组词期间(keyup 带 isComposing)跳过：updateSelBar 内的 getBoundingClientRect
+  // 会强制同步布局刷新，而此时输入法正在逐帧重绘组词框，两者抢主线程 → 英文流畅、中文卡。
+  // 组词结束后的 keyup 不带 isComposing，照常更新浮动样式条。
+  const onSel = (e) => { if (e && e.isComposing) return; updateSelBar(bar); };
   els.rich.addEventListener("mouseup", onSel);
   els.rich.addEventListener("keyup", onSel);
   els.source.addEventListener("mouseup", onSel);
@@ -4529,6 +4532,7 @@ function bindFind() {
   // 编辑器内部的加粗/斜体等已由各自 keydown 处理并 stopPropagation；
   // 这里只负责全局动作：保存/撤销/重做/查找/新建/标题/粘贴纯文本。
   document.addEventListener("keydown", (e) => {
+    if (e.isComposing) return; // 中文组词期不分发快捷键：避免与输入法抢主线程（修 #中文组词卡顿）
     const action = actionForEvent(e);
     // 焦点在「可编辑的 AI 排版预览」里：撤销/重做交给浏览器原生处理。
     // 否则会去撤销左侧编辑器并退出 AI 预览，用户刚在预览里改的字就看不见了。
@@ -4595,7 +4599,8 @@ function bindFind() {
 /* ---------- 专注模式增强：富文本淡化非当前段落 + 源码居中 ---------- */
 function bindFocusDim() {
   const rich = els.rich;
-  const update = () => {
+  const update = (e) => {
+    if (e && e.isComposing) return; // 中文组词期不重算聚焦段落，避免与输入法抢主线程
     if (!document.body.classList.contains("focus-mode")) return;
     const sel = window.getSelection();
     if (!sel || !sel.rangeCount) return;
