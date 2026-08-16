@@ -76,3 +76,12 @@ export function perfStage(name) {
   console.log(`[PERF] ${name}  +${dt}ms`);
   _last = now;
 }
+
+/** 仅在「某步耗时超过 threshold」时才打印，用于揪出预览渲染里偶发的灾难性慢步骤（不刷屏） */
+export function perfSlow(name, dtMs, threshold = 50) {
+  if (!enabled()) return;
+  if (dtMs >= threshold) {
+    // eslint-disable-next-line no-console
+    console.log(`[PERF-SLOW] ${name} 耗时 ${dtMs.toFixed(0)}ms（阈值 ${threshold}ms）`);
+  }
+}

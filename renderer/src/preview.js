@@ -22,7 +22,7 @@ import { getImageById, isDocImageLight } from "./imageStore.js";
 import { useMathExtensions, decorateMath } from "./math.js";
 import { useFootnoteExtensions, assignHeadingIds } from "./extras.js";
 import mermaid from "mermaid";
-import { perfStage } from "./perf.js";
+import { perfStage, perfSlow } from "./perf.js";
 
 marked.setOptions({
   gfm: true,
@@ -63,6 +63,7 @@ export async function renderMermaidIn(container) {
   for (const el of blocks) {
     el.setAttribute("data-mermaid-done", "1");
     const code = el.textContent || "";
+    const t0 = performance.now();
     try {
       const { svg } = await mermaid.render("mmd-" + Math.random().toString(36).slice(2, 9), code);
       const wrap = document.createElement("div");
@@ -74,6 +75,7 @@ export async function renderMermaidIn(container) {
       el.classList.add("mermaid-error");
       el.textContent = "⚠️ Mermaid 渲染失败：\n" + code;
     }
+    perfSlow("mermaid block(" + code.length + "字)", performance.now() - t0, 200);
   }
 }
 
@@ -306,6 +308,7 @@ export async function renderMarkdownInto(container, md) {
   const token = ++renderToken; // 每次渲染自增；旧渲染在让出点检测到 token 变化即放弃
   perfStage("renderMarkdownInto start(" + (md || "").length + "字)");
   const { sections, headings } = prepare(md);
+  perfStage("prepare done(" + sections.length + " sections)");
   // 全局轻量判定：整篇图片总字节 ≤ 阈值才内嵌（按全篇算，不能按段）。
   // 翻转为内嵌/折叠时，所有段都应重渲染，故把 inline 编入段缓存键。
   const inline = isDocImageLight(md);
@@ -323,10 +326,12 @@ export async function renderMarkdownInto(container, md) {
     if (prevNodes[i] && prevHash[i] === h) {
       node = prevNodes[i]; // 复用：不重新 marked/净化，图片也不重新解码
     } else {
+      const t0 = performance.now();
       node = document.createElement("div");
       node.className = "md-sec";
       node.innerHTML = renderSectionInner(sections[i], inline);
       decorateMath(node); // 净化后再渲染公式
+      perfSlow("section#" + i + " render(" + sections[i].length + "字)", performance.now() - t0);
     }
     nextNodes.push(node);
     nextHash.push(h);
@@ -339,7 +344,10 @@ export async function renderMarkdownInto(container, md) {
   container._secNodes = nextNodes;
   container._secHash = nextHash;
   finalizeTOC(container);
+  perfStage("finalizeTOC done");
   container.scrollTop = savedScroll;
-  renderMermaidIn(container); // 渲染 Mermaid 图（异步，不阻塞主渲染）
+  perfStage("mermaid render start");
+  await renderMermaidIn(container); // 渲染 Mermaid 图（异步，不阻塞主渲染）
+  perfStage("mermaid render done");
   perfStage("renderMarkdownInto done(" + sections.length + " sections)");
 }

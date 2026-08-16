@@ -14,6 +14,7 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import { perfSlow } from "./perf.js";
 
 // 占位符：净化后一定存在，decorateMath 时整体替换为 KaTeX
 const PLACEHOLDER = "​MATH​";
@@ -28,15 +29,20 @@ function escAttr(s) {
 
 /** 用 KaTeX 把 LaTeX 渲染成 HTML 字符串（出错也不崩，显示红字） */
 export function renderKatex(tex, displayMode) {
+  const t0 = performance.now();
+  let out;
   try {
-    return katex.renderToString(tex || "", {
+    out = katex.renderToString(tex || "", {
       displayMode: !!displayMode,
       throwOnError: false,
       output: "htmlAndMathml",
     });
   } catch (e) {
-    return `<span class="math-error">${escAttr(tex)}</span>`;
+    out = `<span class="math-error">${escAttr(tex)}</span>`;
   }
+  // KaTeX 对病态/超长公式可能卡数秒甚至更久（同步、不主动让出主线程）——这正是「单帧几十秒」的可疑来源
+  perfSlow("katex(" + (tex || "").length + "字)", performance.now() - t0, 200);
+  return out;
 }
 
 /** marked 扩展：把 $$...$$ 与 $...$ 转成带 data-tex 的占位节点 */
