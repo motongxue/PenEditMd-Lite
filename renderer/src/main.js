@@ -315,9 +315,12 @@ function scheduleSessionSave() {
   if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
   sessionSaveTimer = setTimeout(() => {
     sessionSaveTimer = null;
-    perfStage("sessionSave → IPC(含全部图片 base64)");
+    const snap = sessionSnapshot();
+    const snapBytes = JSON.stringify(snap).length;
+    const imgCount = snap.images && snap.images.images ? snap.images.images.length : 0;
+    perfStage(`sessionSave → IPC(payload=${snapBytes}B, images=${imgCount}${snap.images ? "" : ",图片未变跳过"})`);
     try {
-      window.api.sessionSave(sessionSnapshot());
+      window.api.sessionSave(snap);
     } catch (_) {}
     perfStage("sessionSave done");
   }, 800);
