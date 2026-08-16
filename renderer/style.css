@@ -643,6 +643,10 @@ body {
   line-height: var(--doc-lh);
   caret-color: var(--accent);
   overflow-y: auto;
+  /* 禁用滚动锚定：Chromium 在滚动容器内的 contenteditable 做 IME 组词时，
+     滚动锚定会与组词绘制同步批次处理，导致组词文字/下划线延迟显示（英文无组词故无感）。
+     overflow-anchor:none 让组词绘制立即提交。 */
+  overflow-anchor: none;
   /* 超长不换行的内容（长 URL、无空格长串）自动折行，避免编辑区被撑出横向滚动 */
   overflow-wrap: anywhere;
   word-break: break-word;
