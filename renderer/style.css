@@ -715,6 +715,21 @@ body {
                └ pre.cb-hl           ← 高亮背板（绝对定位铺满，pointer-events:none）
            └ span.cb-lang            ← 右下角语言标签，点击弹出浮层（浮层挂 body）
    关键：两层字体/字号/行高/padding/换行规则必须完全一致，字形才能精确重合。 */
+/* 中文输入法(IME)组词时，浏览器会对 contenteditable 做逐帧重排。
+   若代码块(hljs 高亮 = 大量 span)、公式(KaTeX)、图片等密集子树参与重排，
+   单次组词可卡数秒~数十秒（日志实测单帧 24s~91s）。
+   contain:layout 让这些子树的布局独立，组词重排正文段落时不递归进它们，
+   大幅降低 IME 组词期的重排开销。对内部 textarea/图片无副作用。 */
+.rich-input pre.cb,
+.rich-input .math-block,
+.rich-input .math-inline,
+.rich-input .img-ph,
+.rich-input img.img-expanded,
+.rich-input table,
+.rich-input blockquote {
+  contain: layout;
+}
+
 .rich-input pre.cb {
   position: relative;
   background: var(--code-bg);
