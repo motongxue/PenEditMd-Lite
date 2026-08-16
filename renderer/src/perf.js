@@ -33,6 +33,31 @@ function enabled() {
         console.log(`[PERF-HEARTBEAT] 主线程被卡 ${gap.toFixed(0)}ms（正常应≈250ms）`);
       }
     }, 250);
+    // 帧率探针：连续监测每帧耗时。打字/滚动时若出现 >32ms 的帧（掉到 <30fps），
+    // 说明渲染管线在卡（GPU 重绘 / 布局抖动）——这类 micro-jank 不会被 250ms 心跳抓到。
+    let fLast = performance.now();
+    let fMax = 0;
+    let fOver32 = 0;
+    let fOver50 = 0;
+    let fCount = 0;
+    function loop(t) {
+      const dt = t - fLast;
+      fLast = t;
+      fCount++;
+      if (dt > fMax) fMax = dt;
+      if (dt > 32) fOver32++;
+      if (dt > 50) fOver50++;
+      // 每 1 秒汇总一次
+      if (fCount >= 60) {
+        if (fOver32 > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`[PERF-FRAME] 1s 内 ${fCount} 帧，最长 ${fMax.toFixed(0)}ms，>32ms 掉帧 ${fOver32} 次，>50ms 严重掉帧 ${fOver50} 次`);
+        }
+        fMax = 0; fOver32 = 0; fOver50 = 0; fCount = 0;
+      }
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
   }
   return _enabled;
 }

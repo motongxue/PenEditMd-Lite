@@ -1612,16 +1612,16 @@ function isLargeDoc() {
   return (currentMarkdown() || "").length > LARGE_DOC_CHARS;
 }
 // 最近一次"用户输入字符"的时刻。预览渲染据此做「空闲闸门」：
-// 用户正在打字（距上次输入 <400ms）时绝不重渲染预览，避免每敲一字都触发
+// 用户正在打字（距上次输入 <200ms）时绝不重渲染预览，避免每敲一字都触发
 // markdown 解析 + DOM 重建冻结主线程（修 #输入卡顿；参考 Typora/MarkText 增量渲染思路）。
 let lastEditorInputAt = 0;
 
 function scheduleRender() {
   clearTimeout(renderTimer);
-  const base = isLargeDoc() ? 450 : 220;
-  // 把渲染推迟到「用户停手 400ms 后」才执行；连续打字时每次输入都会把渲染往后推，
+  const base = isLargeDoc() ? 450 : 180;
+  // 把渲染推迟到「用户停手 200ms 后」才执行；连续打字时每次输入都会把渲染往后推，
   // 于是打字过程里预览零重渲染，光标/字符即时显示，停手后才一次性刷新预览。
-  const idleAt = lastEditorInputAt + 400;
+  const idleAt = lastEditorInputAt + 200;
   const delay = Math.max(base, idleAt - Date.now());
   renderTimer = setTimeout(renderPreview, delay);
 }

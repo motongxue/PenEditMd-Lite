@@ -162,7 +162,7 @@ export function createRichEditor({ el, onChange, onInput }) {
     if (composing) return; // 组词中：不序列化、不触发 onChange，等 compositionend 统一处理
     domDirty = true; // 标记脏：刷新前若外部取 getValue，也返回最新 DOM 而非旧缓存
     if (inputTimer) clearTimeout(inputTimer);
-    inputTimer = setTimeout(() => { inputTimer = null; triggerChange(); }, 150);
+    inputTimer = setTimeout(() => { inputTimer = null; triggerChange(); }, 80);
   }
 
   function setValue(md) {
