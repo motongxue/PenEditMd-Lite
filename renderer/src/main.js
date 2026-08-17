@@ -1155,15 +1155,78 @@ function renderActive() {
   renderPreview();
 }
 
+// ╔═════════════════════════════════════════════════════════════════════════╗
+// ║ 中文 IME 组词卡顿 · 根因分析（改这里前务必先读）                          ║
+// ╠═════════════════════════════════════════════════════════════════════════╣
+// ║ 现象：中文组词过程中文字显示正常，但候选窗/整编辑器肉眼发卡；英文流畅。     ║
+// ║                                                                           ║
+// ║ 是否原生问题？—— 否。                                                     ║
+// ║   · 原生 contenteditable / textarea 的文字输入、IME 组词引擎本身没问题。   ║
+// ║   · 自测关闭本函数（[禁改动] 早退）即丝滑、英文始终流畅，可证原生编辑/IME 健康。║
+// ║                                                                           ║
+// ║ 是否后来加的功能导致？—— 是，且是主因。                                    ║
+// ║   把 Markdown 编辑器做成桌面应用时，我们在每次按键的 onEditorChange 上同步   ║
+// ║   挂了一堆「应用层派生功能」，每一项都会触发重排/重绘，与中文候选窗抢主线程：║
+// ║     · 实时预览重渲染（markdown 解析 + DOM 重建）                          ║
+// ║     · 侧栏文件徽标/脏标记、字数统计、首行自动命名文件名、复制按钮可用态     ║
+// ║     · 撤销栈快照、会话自动备份（早期甚至搬运全部图片 base64）             ║
+// ║   中文候选窗对 repaint 极敏感；词间停顿（选词 300~800ms）正好撞上这些 DOM  ║
+// ║   写爆发 → 重绘打断 IME → 肉眼卡。它不表现为「长任务」（JS 全在 1ms 内）， ║
+// ║   故用 Performance 火焰图看不出来，只能靠「禁改动对照」定罪。             ║
+// ║                                                                           ║
+// ║ 修法（治本，非治标）：                                                      ║
+// ║   打字/组词活跃期（composing 或距上次输入 < UI_IDLE）只更新正文，跳过全部   ║
+// ║   派生 DOM 写，改由 scheduleUiRefresh 在「停手 2.5s」后统一补刷一次；       ║
+// ║   组词期 scheduleRender/renderPreview 直接跳过预览重渲染。                ║
+// ║   ※ 关拼写检查、contain:layout、overflow-anchor 等只是缓解，非根因。       ║
+// ╚═════════════════════════════════════════════════════════════════════════╝
+// 中文 IME 组词 / 连续打字活跃期：距上次输入 < UI_IDLE(2500ms) 或正在组词。
+// 这段时间内跳过所有「派生 DOM 写」（文件名、历史栈、列表徽标、字数、复制按钮、
+// 会话备份、预览重渲染）——它们各自触发重排/重绘，中文候选窗对 repaint 极敏感，
+// 会在词间停顿撞上下一次组词 → 肉眼卡顿，且不表现为长任务（JS<1ms）。
+// 改为停手 2.5s 后由 scheduleUiRefresh 统一补刷一次。
+const UI_IDLE = 2500;
+let uiRefreshTimer = null;
+let pendingUiMd = null;
+
 function onEditorChange(md) {
   const f = activeFile();
   if (!f || f.error) return;
+  // 基础状态更新（轻量，必须即时）：正文、dirty、版本号
   f.markdown = md;
   // 手动保存模型：编辑不自动落盘（既不写文件也不写草稿），只标记 dirty；
   // Ctrl+S 才保存。草稿仅在保存/关闭时写入，用于崩溃恢复。
   f.dirty = md !== f.savedMd;
   docVersion++; // 文档变了：查找缓存 / 富文本文本映射需要重建
   scheduleRender();
+  // 打字 / 组词活跃期：延迟所有派生 UI 刷新，避免重绘打断 IME
+  const typing = window.__peneditComposing || (lastEditorInputAt ? Date.now() - lastEditorInputAt < UI_IDLE : false);
+  if (typing) {
+    scheduleUiRefresh(md);
+    return;
+  }
+  flushUiRefresh(md);
+  perfStage("onEditorChange(md=" + (md || "").length + "字)");
+}
+
+// 停手 2.5s 后统一补刷派生 UI（字数/徽标/文件名/复制按钮/历史/会话备份/预览）
+function scheduleUiRefresh(md) {
+  pendingUiMd = md;
+  if (uiRefreshTimer) return; // 已排程则不重置计时（首次按键起算，期间只续延）
+  const run = () => {
+    uiRefreshTimer = null;
+    const stillTyping = window.__peneditComposing || (lastEditorInputAt ? Date.now() - lastEditorInputAt < UI_IDLE : false);
+    if (stillTyping) { scheduleUiRefresh(pendingUiMd); return; } // 还在打，续延
+    flushUiRefresh(pendingUiMd);
+  };
+  if (typeof requestIdleCallback === "function") uiRefreshTimer = requestIdleCallback(run, { timeout: UI_IDLE + 500 });
+  else uiRefreshTimer = setTimeout(run, UI_IDLE);
+}
+
+// 真正执行派生 UI 刷新（非打字期调用，或停手后由 scheduleUiRefresh 补刷）
+function flushUiRefresh(md) {
+  const f = activeFile();
+  if (!f || f.error) return;
   // 用户没手动命名时，随首行内容自动更新文件名
   maybeAutoName(md);
   // 撤销/重做历史栈（合并连续输入）
@@ -1180,7 +1243,6 @@ function onEditorChange(md) {
   }
   // #7：内容变更后防抖备份会话，关窗后也能恢复
   scheduleSessionSave();
-  perfStage("onEditorChange(md=" + (md || "").length + "字)");
 }
 
 /** 只更新当前文件在左侧列表中的徽标与脏标记（onChange 高频调用，必须轻量） */
@@ -1617,6 +1679,7 @@ function isLargeDoc() {
 let lastEditorInputAt = 0;
 
 function scheduleRender() {
+  if (window.__peneditComposing) { renderDirty = true; return; } // 组词期绝不重渲染预览：renderPreview 内部会二次拦截
   clearTimeout(renderTimer);
   const base = isLargeDoc() ? 450 : 180;
   // 把渲染推迟到「用户停手 200ms 后」才执行；连续打字时每次输入都会把渲染往后推，
@@ -1627,6 +1690,7 @@ function scheduleRender() {
 }
 async function renderPreview() {
   perfStage("renderPreview start");
+  if (window.__peneditComposing) { renderDirty = true; return; } // 中文组词期不渲染预览：DOM 重绘会打断候选窗
   if (state.mode === "source") return; // 仅编辑区时不渲染，省性能
   // AI 排版结果直接在分屏预览展示（替代弹出预览）：注入已净化的内联 HTML
   if (state.previewAi && pubState.aiHtml != null) {
