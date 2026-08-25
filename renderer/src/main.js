@@ -23,7 +23,6 @@ import { positionMenuUnder, closeAllMenus } from "./bodyMenu.js";
 import { openSettingsModal, openAiSettingsModal, actionForEvent, loadImgStrategy, loadAiSettings, loadAiModels, getActiveModel, setAiActiveId, openWechatSettingsModal, openWechatPushModal, loadWechatCfg, isWechatReady } from "./settings.js";
 import { buildDocxEntries, buildEpubEntries } from "./officeExport.js";
 import { initDocTree } from "./docTree.js";
-import { initStickyNotes } from "./stickyNotes.js";
 import { themeVarsCss, themeTypographyCss } from "./themeCss.js";
 import {
   THEMES,
@@ -215,12 +214,6 @@ async function init() {
   } catch (e) {
     console.error("init: initDocTree", e);
   }
-  try {
-    initStickyNotes({ setStatus });
-  } catch (e) {
-    console.error("init: initStickyNotes", e);
-  }
-
   // 主题：默认浅色；仅当用户显式存过 "dark" 才用深色
   if (localStorage.getItem("theme") === "dark") {
     document.documentElement.classList.remove("light");

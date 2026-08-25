@@ -60,8 +60,11 @@ function resolvePythonCmd() {
   return { command, args: [path.join(__dirname, "python-server", "server.py")] };
 }
 
+// 后端是否已启动（防止重复拉起 Python 后端）
+let backendStarted = false;
+
 function startPythonBackend() {
-  if (backendStarted) return; // 守卫：避免 notes-only 模式下「打开编辑器」重复拉起后端
+  if (backendStarted) return; // 守卫：避免重复拉起后端
   backendStarted = true;
   const { command, args } = resolvePythonCmd();
   console.log(`[main] start backend: ${command} ${args.join(" ")}`);
@@ -103,7 +106,7 @@ function killBackendTree() {
 /* ---------------- 应用偏好（userData/prefs.json） ----------------
  * 目前只存「点关闭按钮时的行为」：ask（每次询问，默认）/ tray（最小化到托盘）/ quit（直接退出）。
  * 单独一个文件而不是塞进 session.json：偏好与会话内容生命周期不同，避免互相污染。 */
-let prefs = { closeAction: "ask", keepNotesOnClose: false };
+let prefs = { closeAction: "ask" };
 function prefsFile() {
   return path.join(app.getPath("userData"), "prefs.json");
 }
@@ -111,7 +114,7 @@ function loadPrefs() {
   try {
     const raw = fs.readFileSync(prefsFile(), "utf-8");
     const o = raw ? JSON.parse(raw) : null;
-    if (o && typeof o === "object") prefs = { closeAction: "ask", keepNotesOnClose: false, ...o };
+    if (o && typeof o === "object") prefs = { closeAction: "ask", ...o };
   } catch (_) {
     /* 首次运行没有文件，用默认值 */
   }
@@ -154,7 +157,6 @@ function ensureTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "显示主窗口", click: () => showMainFromTray() },
-      { label: "桌面便签", click: () => ensureNotesWindow() },
       { type: "separator" },
       {
         label: "退出应用",
@@ -299,14 +301,7 @@ function createWindow() {
       minimizeToTray();
       return;
     }
-    // 开启「关闭应用显示便签」且有可见便签：不退出，最小化到托盘让便签持续显示
-    const keepNotesAlive =
-      prefs.keepNotesOnClose && notesStore.some((n) => n.open !== false);
     if (prefs.closeAction === "quit") {
-      if (keepNotesAlive) {
-        minimizeToTray();
-        return;
-      }
       quitWithDirtyCheck();
       return;
     }
@@ -338,11 +333,6 @@ function createWindow() {
         if (response === 0) {
           minimizeToTray();
         } else {
-          // 退出应用：开启「关闭应用显示便签」且有可见便签时，改为最小化到托盘保留便签
-          if (prefs.keepNotesOnClose && notesStore.some((n) => n.open !== false)) {
-            minimizeToTray();
-            return;
-          }
           quitWithDirtyCheck();
         }
       })
@@ -355,11 +345,6 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
-    // 若便签窗口还开着，关闭主窗口时应整体退出应用（便签数据已持久化，下次启动恢复），
-    // 否则 app 进程会一直驻留，卸载/重装时会被安装器检测到「仍在运行」而要求手动关闭。
-    if (notesWindow && !notesWindow.isDestroyed()) {
-      app.quit();
-    }
   });
 }
 
@@ -524,9 +509,6 @@ function buildAppMenu() {
       label: "设置",
       submenu: [
         { label: "通用设置", click: () => send("openSettings") },
-        { label: "AI 设置", click: () => send("openAiSettings") },
-        { label: "公众号推送", click: () => send("openWechatSettings") },
-        { label: "样式", click: () => send("openStyle") },
         { type: "separator" },
         {
           label: "关闭窗口行为",
@@ -949,131 +931,6 @@ const MIME_BY_EXT = {
   pdf: "application/pdf", txt: "text/plain", md: "text/markdown",
 };
 
-// ---- 桌面便签（PRD #10）：置顶透明窗口 + 持久化 JSON 存储 ----
-// 便签从「主窗口内 DOM 浮层」改为独立置顶透明窗口，可停留在桌面（不受主窗口最小化影响）。
-let notesWindow = null;
-let notesStore = [];
-// 懒计算：app.getPath 在 app ready 之前调用可能抛错，故不在模块加载期求值
-function notesFile() {
-  return path.join(app.getPath("userData"), "sticky-notes.json");
-}
-
-function loadNotes() {
-  try {
-    const raw = fs.readFileSync(notesFile(), "utf-8");
-    notesStore = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(notesStore)) notesStore = [];
-  } catch (_) {
-    notesStore = [];
-  }
-}
-
-function saveNotes() {
-  try {
-    fs.writeFileSync(notesFile(), JSON.stringify(notesStore), "utf-8");
-  } catch (_) {
-    /* 忽略保存失败 */
-  }
-}
-
-// 广播最新便签给主窗口（列表刷新）；toNotes=true 时同时广播给便签窗口（仅外部变更需要，
-// 避免便签窗口自身的编辑被回广播打断输入）。
-function broadcastNotes(toNotes) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("notes:changed", notesStore);
-  }
-  if (toNotes && notesWindow && !notesWindow.isDestroyed()) {
-    notesWindow.webContents.send("notes:changed", notesStore);
-  }
-}
-
-function maybeHideNotesWindow() {
-  const anyVisible = notesStore.some((n) => n.open !== false);
-  if (!anyVisible && notesWindow && !notesWindow.isDestroyed()) {
-    notesWindow.hide();
-  }
-}
-
-// 便签窗口是「单窗口承载多条便签」，alwaysOnTop 作用于整个窗口。
-// 仅当存在任一「置顶(pinned)且显示中」的便签时，窗口才置顶；否则默认不置顶（#2）。
-function applyNotesAlwaysOnTop() {
-  if (!notesWindow || notesWindow.isDestroyed()) return;
-  const anyPinned = notesStore.some((n) => n.open !== false && n.pinned);
-  notesWindow.setAlwaysOnTop(!!anyPinned);
-}
-
-function ensureNotesWindow() {
-  if (notesWindow && !notesWindow.isDestroyed()) {
-    notesWindow.show();
-    return notesWindow;
-  }
-  const { width, height } = require("electron").screen.getPrimaryDisplay().workAreaSize;
-  notesWindow = new BrowserWindow({
-    width,
-    height,
-    x: 0,
-    y: 0,
-    transparent: true,
-    frame: false,
-    alwaysOnTop: false, // #2：默认不置顶，由 applyNotesAlwaysOnTop 按便签 pinned 决定
-    skipTaskbar: true,
-    resizable: false,
-    movable: false,
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  notesWindow.loadFile(path.join(__dirname, "renderer", "notes.html"));
-  notesWindow.once("ready-to-show", () => {
-    notesWindow.show();
-    // 默认鼠标穿透：只有悬浮到便签上才由便签窗口通过 notes:setIgnore 切回可交互
-    notesWindow.setIgnoreMouseEvents(true, { forward: true });
-    // 若存储里有置顶便签，按设置恢复置顶（#2）
-    applyNotesAlwaysOnTop();
-  });
-  notesWindow.on("closed", () => {
-    notesWindow = null;
-  });
-  return notesWindow;
-}
-
-ipcMain.handle("notes:getAll", () => notesStore);
-
-ipcMain.handle("notes:upsert", (event, { note, fromNotes }) => {
-  if (!note || !note.id) return notesStore;
-  const i = notesStore.findIndex((n) => n.id === note.id);
-  if (i >= 0) notesStore[i] = { ...notesStore[i], ...note };
-  else notesStore.push(note);
-  saveNotes();
-  broadcastNotes(!fromNotes);
-  // #2：便签置顶状态变化后立即生效；#4：隐藏最后一个便签时立即隐藏窗口、释放鼠标捕获
-  applyNotesAlwaysOnTop();
-  maybeHideNotesWindow();
-  return notesStore;
-});
-
-ipcMain.handle("notes:remove", (event, { id }) => {
-  notesStore = notesStore.filter((n) => n.id !== id);
-  saveNotes();
-  broadcastNotes(true); // 便签窗口需要移除对应浮窗
-  maybeHideNotesWindow();
-  return true;
-});
-
-ipcMain.on("notes:setIgnore", (event, ignore) => {
-  if (notesWindow && !notesWindow.isDestroyed()) {
-    notesWindow.setIgnoreMouseEvents(!!ignore, { forward: true });
-  }
-});
-
-ipcMain.handle("notes:ensureWindow", () => {
-  ensureNotesWindow();
-  return true;
-});
-
 // ---- 会话自动保存/恢复（#7）----
 // 把当前会话文档（含从文档树转换而来、尚未落盘的文件）持久化到 userData/session.json，
 // 下次启动由渲染进程读取并恢复，避免「关窗后会话列表空空如也」。
@@ -1410,66 +1267,6 @@ ipcMain.handle("wechat:push", async (event, payload = {}) => {
   }
 });
 
-// ---- 开机自启（按单条便签设置）----
-// 不再有全局开关：是否注册系统登录项，由「是否有便签标记 launchAtLogin」决定。
-// 开机（--notes-only 轻量模式）时，所有 launchAtLogin 的便签会被强制显示（open:true）。
-const NOTES_ONLY = process.argv.includes("--notes-only");
-let backendStarted = false;
-
-function anyLaunchAtLogin() {
-  return notesStore.some((n) => n.launchAtLogin === true);
-}
-function applyAutoLaunch() {
-  try {
-    const hasAny = anyLaunchAtLogin();
-    // 开发模式下 process.execPath 是 node_modules/electron/dist/electron.exe，
-    // 必须同时传入应用目录，否则裸启动会显示 Electron 默认空页面。
-    if (!app.isPackaged) {
-      app.setLoginItemSettings({
-        openAtLogin: hasAny,
-        path: process.execPath,
-        args: [app.getAppPath(), "--notes-only"],
-      });
-    } else {
-      app.setLoginItemSettings({
-        openAtLogin: hasAny,
-        path: process.execPath,
-        args: ["--notes-only"],
-      });
-    }
-  } catch (_) {}
-}
-
-ipcMain.handle("app:getAutoLaunch", () => anyLaunchAtLogin());
-ipcMain.handle("app:setAutoLaunch", () => {
-  applyAutoLaunch();
-  return anyLaunchAtLogin();
-});
-// 通用偏好读写（设置面板用，例如「关闭应用显示便签」）
-ipcMain.handle("app:getPrefs", () => ({ ...prefs }));
-ipcMain.handle("app:setPref", (e, key, val) => {
-  if (key === "closeAction") {
-    if (["ask", "tray", "quit"].includes(val)) {
-      prefs.closeAction = val;
-      buildAppMenu();
-    }
-  } else {
-    prefs[key] = val;
-  }
-  savePrefs();
-  return { ...prefs };
-});
-// 便签窗口「打开编辑器」：聚焦已存在的主窗口，或按需创建主窗口并启动后端（notes-only 模式下后端未启动）
-ipcMain.handle("app:openMain", () => {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createWindow();
-  } else {
-    mainWindow.show();
-    mainWindow.focus();
-  }
-  if (!backendStarted) startPythonBackend();
-  return true;
-});
 
 // ---- 文件关联：从命令行提取被「打开方式/双击」选中的文件路径 ----
 // 只认我们注册过的扩展名，避免把 electron 自身参数或其它路径误当文件
@@ -1522,31 +1319,9 @@ app.on("second-instance", (_e, argv) => {
 app.whenReady().then(async () => {
   loadPrefs(); // 载入偏好（关闭窗口行为等），须早于 buildAppMenu 以正确回显单选项
   buildAppMenu(); // 原生窗口菜单栏（文件/编辑/视图/设置/帮助）
-  loadNotes(); // 载入持久化便签
-  applyAutoLaunch(); // 应用开机自启注册（读取偏好，幂等；勾选后才真正写入登录项）
 
-  // 开机自启便签（launchAtLogin）：优先强制显示，且不依赖后端是否就绪
-  if (notesStore.some((n) => n.launchAtLogin === true)) {
-    notesStore.forEach((n) => { if (n.launchAtLogin === true) n.open = true; });
-    saveNotes();
-  }
-
-  // 本次启动是否由「打开方式/双击文件」触发（仅 normal 模式处理；notes-only 下若带文件则降级为正常模式）
+  // 本次启动是否由「打开方式/双击文件」触发
   const openAtLaunch = extractOpenPath(process.argv);
-
-  if (NOTES_ONLY && !openAtLaunch) {
-    // 轻量模式（开机自启便签）：只显示桌面便签窗口，不启动 Python 后端、不建编辑器主窗口，
-    // 性能开销最低；需要编辑时再点便签窗口里的「打开编辑器」按需拉起。
-    console.log("[main] notes-only 轻量模式启动");
-    if (notesStore.some((n) => n.open !== false)) ensureNotesWindow();
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) ensureNotesWindow();
-    });
-    return;
-  }
-
-  // 普通模式：先弹便签窗口（哪怕后端稍后才就绪，便签也应尽快显示），再启动后端
-  if (notesStore.some((n) => n.open !== false)) ensureNotesWindow();
 
   startPythonBackend();
   // 后端就绪与否都不阻塞：失败仅记录日志，不再弹阻塞式错误框
@@ -1577,12 +1352,6 @@ app.on("before-quit", () => {
       tray.destroy();
     } catch (_) {}
     tray = null;
-  }
-  // 便签窗口若仍开着，app 不会因主窗口关闭而退出；这里强制收掉，避免留僵尸进程
-  if (notesWindow && !notesWindow.isDestroyed()) {
-    try {
-      notesWindow.destroy();
-    } catch (_) {}
   }
   killBackendTree();
 });

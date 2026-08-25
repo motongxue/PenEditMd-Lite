@@ -78,7 +78,6 @@
         <div class="sidebar-tabs">
           <button class="tab" data-tab="tree" title="文档树（工作文件夹）">文档树</button>
           <button class="tab active" data-tab="session" title="本次会话文档">会话</button>
-          <button class="tab" data-tab="notes" title="便签">便签</button>
         </div>
 
         <!-- 文档树：浏览磁盘工作文件夹 -->
@@ -106,23 +105,6 @@
           <div class="filelist-bottom">
             <ul id="files"></ul>
             <div class="filelist-count"><span id="file-count">0 个文件</span></div>
-          </div>
-        </div>
-
-        <!-- 便签 -->
-        <div class="tab-panel hidden" data-panel="notes">
-          <div class="filelist-head">
-            <div class="filelist-actions">
-              <button id="btn-new-note" class="btn ghost small" title="新建便签">新建便签</button>
-            </div>
-            <span class="note-hint" title="右键列表中的便签可重命名 / 置顶 / 设开机启动">右键便签可重命名、置顶、设开机启动</span>
-          </div>
-          <label class="note-setting" title="开启后，关闭应用（退出）便签仍保留在桌面显示">
-            <input type="checkbox" id="keep-notes-on-close" />
-            <span>关闭应用时显示便签</span>
-          </label>
-          <div class="filelist-bottom">
-            <ul id="notes-list" class="notes-list"></ul>
           </div>
         </div>
       </aside>

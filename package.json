@@ -40,7 +40,6 @@
     "files": [
       "main.js",
       "preload.js",
-      "renderer/notes.html",
       "dist/renderer/**/*",
       "LICENSE",
       "THIRD-PARTY-LICENSES.md"

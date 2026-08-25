@@ -85,31 +85,6 @@ contextBridge.exposeInMainWorld("api", {
   // 读取会话：返回数组（无则空数组）
   sessionLoad: () => ipcRenderer.invoke("session:load"),
 
-  // ---- 桌面便签（PRD #10）：独立置顶透明窗口 ----
-  // 取全部便签（主窗口列表 / 便签窗口渲染都用）
-  notesGetAll: () => ipcRenderer.invoke("notes:getAll"),
-  // 新增/更新一条便签（fromNotes=true 表示来自便签窗口自身，主进程不再回广播给便签窗口以免打断输入）
-  notesUpsert: (note, fromNotes) => ipcRenderer.invoke("notes:upsert", { note, fromNotes }),
-  // 删除一条便签
-  notesRemove: (id) => ipcRenderer.invoke("notes:remove", { id }),
-  // 便签窗口：切换鼠标穿透（true=穿透，false=可交互）
-  notesSetIgnore: (ignore) => ipcRenderer.send("notes:setIgnore", ignore),
-  // 主窗口请求打开/确保便签窗口存在并显示
-  notesEnsureWindow: () => ipcRenderer.invoke("notes:ensureWindow"),
-  // 便签窗口收到主进程广播的便签变更
-  onNotesChanged: (cb) => ipcRenderer.on("notes:changed", (_e, store) => cb(store)),
-
-  // ---- 便签开机自启 + 轻量模式（#3）----
-  // 读取「开机自动显示便签」偏好
-  getAutoLaunch: () => ipcRenderer.invoke("app:getAutoLaunch"),
-  // 设置「开机自动显示便签」（true/false）
-  setAutoLaunch: (v) => ipcRenderer.invoke("app:setAutoLaunch", v),
-  // ---- 通用偏好读写（如「关闭应用显示便签」）----
-  getPrefs: () => ipcRenderer.invoke("app:getPrefs"),
-  setPref: (key, val) => ipcRenderer.invoke("app:setPref", key, val),
-  // 便签窗口「打开编辑器」：聚焦/创建主窗口并启动后端
-  openMainApp: () => ipcRenderer.invoke("app:openMain"),
-
   // ---- AI 对话（OpenAI 兼容 chat/completions）：渲染进程把配置+消息发主进程，主进程代发请求
   //      （避开浏览器 CORS，且 API Key 不进入页面脚本上下文）----
   aiChat: (payload) => ipcRenderer.invoke("ai:chat", payload),
