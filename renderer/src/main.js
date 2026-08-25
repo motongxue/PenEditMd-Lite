@@ -15,13 +15,6 @@ import { renderMarkdownInto, bindAnchorClick, reinitMermaid, renderRawHtml } fro
 import { perfReset, perfStage } from "./perf.js";
 import { expandMarkdown, getImageById, shrinkMarkdown, isDocImageLight, snapshotImages, restoreImages, replaceImage } from "./imageStore.js";
 import { buildExportHtml } from "./exporter.js";
-import {
-  buildPlatformContent,
-  copyPlatformResult,
-  copyPlainToClipboard,
-  PLATFORMS,
-} from "./wechat.js";
-import { buildAiLayoutMessages, buildAiLayoutInstruction, stripCodeFence, DESIGN_LANGUAGES } from "./aiDesignSkill.js";
 import { setStatusSink } from "./status.js";
 import { bindEditorContextMenu } from "./editorMenu.js";
 import { openLocalImageFile } from "./prompt.js";
@@ -66,28 +59,12 @@ const state = {
 };
 
 function getActiveTheme() {
-  if (state.activeTheme) return state.activeTheme;
-  const t = getTheme(state.activeThemeId);
-  return t ? t.theme : null;
+  return null;
 }
 /**
  * 把主题注入编辑器预览与富文本编辑区（所见即所得）。
  * 可视化样式面板 / 一键换色 / 选主题都走这里 —— 改主题字段后重新注入即可实时刷新。
  */
-function applyPreviewTheme(theme) {
-  let tag = document.getElementById("tmpl-theme-style");
-  if (!tag) {
-    tag = document.createElement("style");
-    tag.id = "tmpl-theme-style";
-    document.head.appendChild(tag);
-  }
-  if (!theme) {
-    tag.textContent = "";
-    return;
-  }
-  // 变量层 + 排版层；组件层（.tmpl-*）已由 ../tmplComponents.css 静态加载，此处不重复注入
-  tag.textContent = themeVarsCss(theme) + "\n" + themeTypographyCss(theme);
-}
 
 // 超过该字符数的文档视为「超大文档」，自动降级到源码模式 + 更长防抖，避免编辑卡顿
 const LARGE_DOC_CHARS = 500000;
@@ -480,7 +457,7 @@ function bindEvents() {
   // 这里不要再直接绑 exportMarkdown，否则点击时会"既展开菜单又直接弹出 MD 另存对话框"。
   els.btnClear.addEventListener("click", clearAll);
   els.btnToggle.addEventListener("click", toggleSidebar);
-  els.btnTheme.addEventListener("click", toggleTheme);
+  els.btnTheme.addEventListener("click", undefined);
   els.btnFocus.addEventListener("click", toggleFocus);
   els.btnRich.addEventListener("click", () => switchEditorType("richtext"));
   els.btnSource.addEventListener("click", () => switchEditorType("source"));
@@ -1091,7 +1068,6 @@ function selectFile(id) {
   if (f) {
     state.activeTheme = f.theme || null;
     state.activeThemeId = f.themeId || null;
-    applyPreviewTheme(state.activeTheme);
   }
   hideImageFoldTip();
   hideExportTip();
@@ -1099,7 +1075,6 @@ function selectFile(id) {
   renderActive();
   // 切文档后，导出限制可能随「含组件/主题」变化（#189）
   refreshExportMenu();
-  if (state.previewAi) exitAiPreview(); // AI 排版结果只属于当前文档，切走即退出
   updateCharCount();
 }
 
@@ -1238,7 +1213,6 @@ function flushUiRefresh(md) {
   updateCopyButton();
   // 编辑即退出 AI 排版预览，恢复实时 Markdown 预览（避免预览与正文不一致）
   if (state.previewAi) {
-    exitAiPreview();
     scheduleRender(); // 下一帧按新正文重新渲染预览
   }
   // #7：内容变更后防抖备份会话，关窗后也能恢复
@@ -1293,7 +1267,6 @@ function refreshAfterHistory(action) {
   scheduleRender();
   refreshListBadge(f);
   updateCharCount();
-  if (state.previewAi) { exitAiPreview(); scheduleRender(); } // 撤销/重做也回到实时预览
   updateHistoryButtons();
   setStatus(action);
 }
@@ -1448,11 +1421,8 @@ function bindMenuActions() {
         case "undo": undoHistory(); break;
         case "redo": redoHistory(); break;
         case "find": openFind(true); break;
-        case "toggleTheme": toggleTheme(); break;
         case "openSettings": openSettingsModal(); break;
-        case "openAiSettings": openAiSettingsModal(); break;
         case "openWechatSettings": openWechatSettingsModal(); break;
-        case "openStyle": openStyleModal(); break;
         case "modeSplit": setMode("split"); break;
         case "modeSource": setMode("source"); break;
         case "modePreview": setMode("preview"); break;
@@ -1895,95 +1865,16 @@ async function compressMarkdownImages(md, targetBytes) {
 
 let tmplCatFilter = "全部";
 
-function buildThemeGallery(prefix = "theme") {
-  buildThemeSwatches(prefix);
-  buildThemeCats(prefix);
-  buildThemeList(prefix);
-}
 
 /** ① 主题色样本（一键换色，不替换正文） */
-function buildThemeSwatches(prefix = "theme") {
-  const box = document.getElementById(prefix + "-swatches");
-  if (!box) return;
-  box.innerHTML = "";
-  THEMES.forEach((t) => {
-    const sw = document.createElement("button");
-    sw.type = "button";
-    sw.className = "tmpl-swatch";
-    sw.title = t.name;
-    sw.style.background = t.theme.accent;
-    sw.dataset.id = t.id;
-    sw.addEventListener("click", () => applyThemeOnly(t.theme, t.id));
-    box.appendChild(sw);
-  });
-}
 
 /** ② 行业 / 节日 分类筛选 */
-function buildThemeCats(prefix = "theme") {
-  const box = document.getElementById(prefix + "-cats");
-  if (!box) return;
-  box.innerHTML = "";
-  CATEGORIES.forEach((c) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "tmpl-cat" + (c === tmplCatFilter ? " active" : "");
-    b.textContent = c;
-    b.addEventListener("click", () => {
-      tmplCatFilter = c;
-      buildThemeCats(prefix);
-      buildThemeList(prefix);
-    });
-    box.appendChild(b);
-  });
-}
 
 /** ③ 整套主题卡片（点击载入骨架） */
-function buildThemeList(prefix = "theme") {
-  const list = document.getElementById(prefix + "-list");
-  if (!list) return;
-  list.innerHTML = "";
-  const items = THEMES.filter((t) => tmplCatFilter === "全部" || t.category === tmplCatFilter);
-  items.forEach((t) => {
-    const th = t.theme;
-    const card = document.createElement("div");
-    card.className = "theme-card";
-    card.dataset.id = t.id;
-    const mini = document.createElement("div");
-    mini.className = "tmpl-mini";
-    mini.style.background = th.accentSoft;
-    mini.style.color = th.text;
-    mini.style.fontFamily = `${th.font},"Microsoft YaHei",sans-serif`;
-    mini.innerHTML = `
-      <div class="t-title" style="color:${th.accent};border-bottom:2px solid ${th.accent}">文章标题</div>
-      <div class="t-h" style="color:${th.accent}">小标题示例</div>
-      <div class="t-body">正文示例文字，阅读更轻松，避免大段堆砌。</div>
-      <div class="t-quote" style="border-left:3px solid ${th.accent};background:${th.accentSoft};color:${th.muted}">引用提示框</div>`;
-    const meta = document.createElement("div");
-    meta.className = "tmpl-meta";
-    meta.innerHTML = `<div class="tmpl-name">${t.name}</div><div class="tmpl-desc">${t.desc}</div><div class="tmpl-scenes">适合：${(t.scenes || []).join(" · ")}</div>`;
-    card.append(mini, meta);
-    card.addEventListener("click", () => applyTheme(t.id));
-    list.appendChild(card);
-  });
-}
 
 /** 排版组件库：在光标处插入（参考秀米模块化组件）。popover 用 mousedown 保焦，
  *  所以这里直接按当前选区/光标插入，所见即所得。prefix 指定渲染到哪个容器
  *  （默认 "comp" = 工具栏目板弹层；"pub-comp" 此前用于左栏公众号排版面板，现左栏已移除）。 */
-function buildCompPop(prefix = "comp") {
-  const list = document.getElementById(prefix + "-list");
-  if (!list) return;
-  list.innerHTML = "";
-  COMPONENTS.forEach((c) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "tmpl-comp";
-    b.dataset.id = c.id;
-    b.innerHTML = `<span class="tmpl-comp-name">${c.name}</span><span class="tmpl-comp-group">${c.group}</span>`;
-    b.addEventListener("click", () => insertComponent(c));
-    list.appendChild(b);
-  });
-}
 
 /* 只含 <br> 的空段落（光标停在这种空行上时，组件直接顶掉它，避免组件「上方」多出一行） */
 function isBlankParagraph(n) {
@@ -1995,197 +1886,19 @@ function isBlankParagraph(n) {
  * execCommand("insertHTML") 会把当前段落从光标处劈成两半，块级组件前面就会残留一个空行，
  * 表现为「向上加了一行」。这里改为：定位顶层块 → 空行则替换、否则插到它后面 → 光标落到组件下方空段。
  */
-function insertComponentBlocks(html) {
-  const root = editor && editor.el;
-  if (!root) return false;
-  root.focus();
-  let anchor = null;
-  const sel = window.getSelection();
-  if (sel && sel.rangeCount) {
-    let n = sel.getRangeAt(0).startContainer;
-    if (root.contains(n)) {
-      while (n && n.parentNode && n.parentNode !== root) n = n.parentNode;
-      if (n && n.parentNode === root) anchor = n;
-    }
-  }
-  const holder = document.createElement("div");
-  holder.innerHTML = html;
-  const nodes = Array.from(holder.childNodes).filter(
-    (n) => !(n.nodeType === 3 && !n.textContent.trim())
-  );
-  if (!nodes.length) return false;
-  // 组件末尾保证有一个可编辑空段落，作为光标落点（换行不会带入组件样式）
-  let tail = nodes[nodes.length - 1];
-  if (!isBlankParagraph(tail)) {
-    tail = document.createElement("p");
-    tail.appendChild(document.createElement("br"));
-    nodes.push(tail);
-  }
-  const frag = document.createDocumentFragment();
-  nodes.forEach((n) => frag.appendChild(n));
-  if (isBlankParagraph(anchor)) root.replaceChild(frag, anchor);
-  else if (anchor) root.insertBefore(frag, anchor.nextSibling);
-  else root.appendChild(frag);
-  // 光标落到组件下方空段（放在 <br> 之前，续写不会先空一行）
-  const r = document.createRange();
-  r.setStart(tail, 0);
-  r.collapse(true);
-  const s = window.getSelection();
-  s.removeAllRanges();
-  s.addRange(r);
-  root.focus();
-  if (tail.scrollIntoView) tail.scrollIntoView({ block: "nearest" });
-  root.dispatchEvent(new Event("input", { bubbles: true })); // 同步 markdown / 预览
-  return true;
-}
 
-async function insertComponent(c) {
-  try {
-    let comp = c;
-    let extra = "";
-    if (c.dynamic === "toc") {
-      // 目录：按当前正文标题自动生成，没有标题时退回示例目录
-      const toc = buildToc(editor.getValue());
-      comp = { ...c, html: toc.html, md: toc.md };
-      extra = toc.count ? `（已按 ${toc.count} 个标题生成）` : "（正文暂无标题，先插入示例目录）";
-    } else if (c.id === "audio" || c.id === "video") {
-      // 音频/视频组件：弹出文件选择器，把本地文件读成 base64 后写入 src
-      const exts = c.id === "audio" ? ["mp3", "m4a", "wav", "ogg", "aac", "flac"] : ["mp4", "webm", "ogv", "mov", "mkv"];
-      const paths = await window.api.openFile(exts);
-      if (!paths || !paths.length) {
-        setStatus("已取消插入" + c.name);
-        return;
-      }
-      const media = await window.api.readMedia(paths[0]);
-      if (!media || !media.dataUri) {
-        setStatus("读取" + c.name + "文件失败");
-        return;
-      }
-      const tag = c.id === "audio" ? "audio" : "video";
-      const html = `<div class="tmpl-keep tmpl-${c.id}"><${tag} controls src="${media.dataUri}"></${tag}><div class="tmpl-media-cap">${esc(media.name || c.name)}</div></div>`;
-      const md = html + "\n\n";
-      comp = { ...c, html, md };
-      extra = `（${media.name}）`;
-    }
-    if (editor.type === "richtext" && editor.el) {
-      if (!insertComponentBlocks(comp.html)) editor.insertHTML(comp.html);
-    } else {
-      editor.insertText(comp.md);
-    }
-    setStatus("已插入组件：" + c.name + (extra || "（按当前主题色渲染）"));
-    // 插入组件后，导出应被限制为仅长图 / HTML（#189）
-    refreshExportMenu();
-    // 含组件后复制出去只是源码，禁用工具栏「复制」（#200）
-    updateCopyButton();
-  } catch (e) {
-    setStatus("插入组件失败：" + (e && e.message));
-  }
-}
 
 /** 「更新目录」：按当前正文标题重新生成正文里所有目录组件 */
-function refreshToc() {
-  const md = editor.getValue();
-  const toc = buildToc(md);
-  const res = replaceTocBlocks(md, toc.html);
-  if (!res.count) {
-    setStatus("正文里还没有目录组件，请先插入「目录导航」");
-    return;
-  }
-  editor.setValue(res.md);
-  onEditorChange(res.md);
-  setStatus(
-    toc.count
-      ? `目录已更新：${toc.count} 条（共 ${res.count} 处目录组件）`
-      : "正文暂无标题，目录已恢复为示例内容"
-  );
-}
 
-function applyTheme(id) {
-  const t = getTheme(id);
-  if (!t) return;
-  // 主题只作用于「新建的这篇」：载入骨架并带上该主题，不影响其它已打开文档（#8）。
-  // 主题随文件存储（见 addResult/newDoc），由 selectFile 套用，无需全局 localStorage。
-  closeThemeModal();
-  newDoc(t.name + ".md", t.skeleton, { theme: t.theme, themeId: id });
-  setStatus("已应用主题：" + t.name + "（可在编辑区直接改写）");
-  refreshExportMenu();
-}
 
 /** 一键换色：仅切换当前文档主题色，不替换正文内容（参考 135 一键配色） */
-function applyThemeOnly(theme, id) {
-  const f = activeFile();
-  state.activeThemeId = id || state.activeThemeId;
-  state.activeTheme = theme;
-  if (f) {
-    f.theme = theme;
-    f.themeId = state.activeThemeId;
-    scheduleSessionSave();
-  }
-  applyPreviewTheme(theme);
-  const label = id ? getTheme(id).name : "自定义主色";
-  setStatus("已切换主题色：" + label + "（预览与导出同步更新）");
-  refreshExportMenu();
-  updateCopyButton();
-}
 
-function clearTheme() {
-  const f = activeFile();
-  state.activeThemeId = null;
-  state.activeTheme = null;
-  if (f) {
-    f.theme = null;
-    f.themeId = null;
-    scheduleSessionSave();
-  }
-  applyPreviewTheme(null);
-  closeThemeModal();
-  setStatus("已清除主题，恢复默认样式");
-  refreshExportMenu();
-  updateCopyButton();
-}
 
 /* ============================================================
    可视化样式面板（正文/标题/引用/代码块主题，实时预览）
    ============================================================ */
 
 // 样式面板字段配置（数据驱动生成控件）。每个字段对应主题对象的一个 key。
-const STYLE_FIELDS = [
-  {
-    group: "正文",
-    items: [
-      { key: "bodySize", label: "正文字号", type: "range", min: 13, max: 18, step: 1, unit: "px" },
-      { key: "lineHeight", label: "行距", type: "range", min: 1.4, max: 2.2, step: 0.05 },
-      { key: "paraAfter", label: "段间距", type: "range", min: 0, max: 20, step: 1, unit: "px" },
-      { key: "justify", label: "对齐", type: "select", options: [["两端对齐", true], ["左对齐", false]] },
-      { key: "font", label: "正文字体", type: "select", options: [["微软雅黑", "微软雅黑"], ["宋体", "宋体"], ["黑体", "黑体"], ["楷体", "楷体"], ["苹方", "苹方"], ["等线", "等线"], ["Arial", "Arial"], ["Georgia", "Georgia"]] },
-      { key: "text", label: "正文字色", type: "color" },
-    ],
-  },
-  {
-    group: "标题",
-    items: [
-      { key: "accent", label: "主色", type: "color" },
-      { key: "accentSoft", label: "主色浅底", type: "color" },
-      { key: "titleSize", label: "文章标题字号", type: "range", min: 18, max: 28, step: 1, unit: "px" },
-      { key: "h2Size", label: "小标题字号", type: "range", min: 15, max: 22, step: 1, unit: "px" },
-      { key: "muted", label: "辅助字色", type: "color" },
-    ],
-  },
-  {
-    group: "引用",
-    items: [
-      { key: "quoteBg", label: "引用背景", type: "color", fallback: "#f6f7f9" },
-      { key: "quoteBorder", label: "引用左边框", type: "color", fallback: "#e2e5e9" },
-    ],
-  },
-  {
-    group: "代码块",
-    items: [
-      { key: "codeBg", label: "代码背景", type: "color", fallback: "#f6f8fa" },
-      { key: "codeSize", label: "代码字号", type: "range", min: 11, max: 16, step: 1, unit: "px" },
-    ],
-  },
-];
 
 let styleWorkTheme = null;
 
@@ -2194,79 +1907,7 @@ function cloneTheme(t) {
 }
 
 /** 实时套用样式面板的工作主题：更新 state、刷新预览、持久化到当前文档 */
-function applyThemeLive(theme) {
-  state.activeTheme = theme;
-  applyPreviewTheme(theme);
-  const f = activeFile();
-  if (f) {
-    f.theme = theme;
-    scheduleSessionSave();
-  }
-  refreshExportMenu();
-}
 
-function buildStylePanel() {
-  const body = document.getElementById("style-body");
-  if (!body || body.dataset.built) return;
-  body.dataset.built = "1";
-  body.innerHTML = "";
-  STYLE_FIELDS.forEach((g) => {
-    const sec = document.createElement("div");
-    sec.className = "style-group";
-    const title = document.createElement("div");
-    title.className = "style-group-title";
-    title.textContent = g.group;
-    sec.appendChild(title);
-    g.items.forEach((it) => {
-      const row = document.createElement("div");
-      row.className = "style-row";
-      const lab = document.createElement("label");
-      lab.className = "style-label";
-      lab.textContent = it.label;
-      row.appendChild(lab);
-      let input;
-      if (it.type === "range") {
-        input = document.createElement("input");
-        input.type = "range";
-        input.min = it.min; input.max = it.max; input.step = it.step;
-        input.dataset.unit = it.unit || "";
-      } else if (it.type === "color") {
-        input = document.createElement("input");
-        input.type = "color";
-      } else {
-        input = document.createElement("select");
-        input.className = "style-select";
-        it.options.forEach(([txt, val]) => {
-          const o = document.createElement("option");
-          o.textContent = txt;
-          o.value = String(val);
-          input.appendChild(o);
-        });
-      }
-      input.className = (input.className ? input.className + " " : "") + "style-input";
-      input.dataset.key = it.key;
-      if (it.fallback != null) input.dataset.fallback = it.fallback;
-      const val = document.createElement("span");
-      val.className = "style-val";
-      row.appendChild(input);
-      row.appendChild(val);
-      sec.appendChild(row);
-    });
-    body.appendChild(sec);
-  });
-  body.querySelectorAll(".style-input").forEach((input) => {
-    input.addEventListener("input", () => {
-      const key = input.dataset.key;
-      let v;
-      if (input.type === "range") v = parseFloat(input.value);
-      else if (input.type === "color") v = input.value;
-      else v = input.value === "true" ? true : input.value === "false" ? false : input.value;
-      styleWorkTheme[key] = v;
-      applyThemeLive(cloneTheme(styleWorkTheme));
-      updateStyleVal(input);
-    });
-  });
-}
 
 function updateStyleVal(input) {
   const val = input.parentNode.querySelector(".style-val");
@@ -2291,13 +1932,6 @@ function syncStylePanel() {
   });
 }
 
-function openStyleModal() {
-  buildStylePanel();
-  styleWorkTheme = cloneTheme(getActiveTheme());
-  syncStylePanel();
-  const modal = document.getElementById("style-modal");
-  if (modal) modal.classList.remove("hidden");
-}
 function closeStyleModal() {
   const modal = document.getElementById("style-modal");
   if (modal) modal.classList.add("hidden");
@@ -2311,7 +1945,6 @@ function bindStyleModal() {
     sReset.addEventListener("click", () => {
       const t = getActiveTheme();
       styleWorkTheme = cloneTheme(t ? t.theme : DEFAULT_THEME);
-      applyThemeLive(cloneTheme(styleWorkTheme));
       syncStylePanel();
       setStatus("已恢复预设样式");
     });
@@ -2323,15 +1956,6 @@ function bindStyleModal() {
     });
 }
 
-function openThemeModal() {
-  buildThemeGallery();
-  const modal = document.getElementById("theme-modal");
-  if (modal) modal.classList.remove("hidden");
-}
-function closeThemeModal() {
-  const modal = document.getElementById("theme-modal");
-  if (modal) modal.classList.add("hidden");
-}
 
 /* ---------- 导出校验提示（编辑区顶部横幅） ---------- */
 function hideExportTip() {
@@ -2345,25 +1969,22 @@ function bindThemeUI() {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (btn.disabled) return; // 禁用态（未开启公众号排版）不打开主题
-      openThemeModal();
     });
   }
   const modal = document.getElementById("theme-modal");
   if (modal) {
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) closeThemeModal(); // 点遮罩关闭
     });
   }
   const close = document.getElementById("theme-close");
-  if (close) close.addEventListener("click", closeThemeModal);
+  if (close) close.addEventListener("click", undefined);
   const clear = document.getElementById("theme-clear");
-  if (clear) clear.addEventListener("click", clearTheme);
+  if (clear) clear.addEventListener("click", undefined);
   const custom = document.getElementById("theme-custom");
   if (custom) {
     // 取色器：基于当前主题派生自定义主色（参考 135 一键配色）
     custom.addEventListener("input", () => {
       const base = getActiveTheme() || DEFAULT_THEME;
-      applyThemeOnly(deriveTheme(base, custom.value), null);
     });
   }
   const tipClose = document.getElementById("export-tip-close");
@@ -2379,7 +2000,6 @@ function bindComponentsUI() {
   const btn = document.getElementById("btn-components");
   const pop = document.getElementById("comp-pop");
   if (!btn || !pop) return;
-  buildCompPop();
   let hideTimer = null;
   const openPop = () => {
     if (btn.disabled) return; // 禁用态（未开启公众号排版）不展开下拉
@@ -2415,7 +2035,6 @@ function bindComponentsUI() {
   if (ctoc)
     ctoc.addEventListener("click", (e) => {
       e.stopPropagation();
-      refreshToc();
       closePop();
     });
   document.addEventListener("click", (e) => {
@@ -2505,148 +2124,17 @@ function updateSelBar(bar) {
 
 /** 统一 AI 调用：成功返回文本，失败返回 null 并已 setStatus 提示 */
 let lastAiResponse = null; // 供上层判断截断（res.truncated）等
-async function askAI(messages, { pending, maxTokens, timeoutMs } = {}) {
-  const s = loadAiSettings();
-  const baseURL = (s.baseURL || "").trim();
-  const model = (s.model || "").trim();
-  const apiKey = (s.apiKey || "").trim();
-  // 超时：显式传入（如 AI 排版用更长兜底）> 模型设置 > 默认 60s
-  const finalTimeout = timeoutMs || (s.timeout ? s.timeout * 1000 : 60000);
-  aiDbg(`askAI: model=${model}, baseURL=${baseURL}, apiKey已配置=${!!apiKey}, messages=${messages.length}, timeoutMs=${finalTimeout}`);
-  if (!baseURL || !apiKey || !model) {
-    setStatus("AI 未配置：打开「设置 → AI 模型」填写接口地址 / 密钥 / 模型");
-    aiDbg("askAI: 配置缺失，终止");
-    return null;
-  }
-  if (pending) setStatus(pending);
-  let res;
-  try {
-    res = await window.api.aiChat({ baseURL, apiKey, model, messages, maxTokens, timeoutMs: finalTimeout });
-  } catch (e) {
-    setStatus("AI 调用失败：" + (e && e.message ? e.message : e));
-    return null;
-  }
-  lastAiResponse = res || null;
-  if (!res || !res.ok) {
-    setStatus("AI 调用失败：" + (res && res.error ? res.error : "未知错误"));
-    return null;
-  }
-  return res.text;
-}
 
 /* 提示词取自公众号《写东西卡壳？这15个AI写作Prompt》文章创作类（润色/改写/续写/概括），
  * 其中 {text} 在 runAiInline 里被选中文本替换。翻译项文章无对应，保留原提示词。 */
-const AI_INLINE_ACTIONS = {
-  polish: {
-    label: "润色",
-    prompt: `请帮我润色下面这篇文章，让它更吸引人、更好读。
-原文内容：
-{text}
-润色重点：叙述更生动、语言更顺、结构更清楚
-要求：
-1. 把表达改得更流畅、有画面感；
-2. 理顺结构，逻辑清楚不绕弯；
-3. 突出核心观点，别让重点埋在段落里。
-请直接给出润色后的全文，不要任何解释或前后缀。`,
-  },
-  rewrite: {
-    label: "改写",
-    prompt: `请帮我改写下面这篇文章。
-改写内容：
-{text}
-要求：
-1. 先搞懂原文在讲啥、啥风格；
-2. 按目标场景（公众号 / 头条 / CSDN 等）和读者调整口吻；
-3. 改完内容要准、要连得上。
-请直接给出改写后的全文，不要任何解释或前后缀。`,
-  },
-  continue: {
-    label: "续写",
-    prompt: `请帮我把这篇没写完的文章续写完整。
-原文内容：
-{text}
-续写方向：顺着原文的脉络自然延伸，保持原有风格与观点。
-要求：
-1. 先读懂原文的内容和语气；
-2. 续写方向要跟原文接得上；
-3. 保持原有风格，别写着写着变味。
-请直接给出续写内容（不必重复原文），不要任何解释或前后缀。`,
-  },
-  translate: { label: "翻译", prompt: "请将下面的文本翻译成简体中文，直接给出译文，不要任何解释或前后缀：\n{text}" },
-  summary: {
-    label: "摘要",
-    prompt: `请帮我把下面的内容概括一下。
-原文内容：
-{text}
-要求：
-1. 提炼核心观点和关键信息；
-2. 说得简洁明白，别绕；
-3. 原意别丢，信息要完整。
-请直接给出摘要（控制在 1-3 句话），不要任何解释或前后缀。`,
-  },
-};
 
 /** 行内 AI：选中文字 → 调接口 → 替换/续写选区；未选中则对全文处理 */
-async function runAiInline(action) {
-  const act = AI_INLINE_ACTIONS[action];
-  if (!act) return;
-  const selText = editor.getSelectionText();
-  const hasSel = !!(selText && selText.trim());
-  // 未选中时回退到「整篇文档」作为处理对象
-  const srcText = hasSel ? selText : currentMarkdown();
-  // ---- 详细日志（写入 ai-layout.log，与 AI 排版同文件）----
-  aiLayoutLog(`========== 行内 AI「${act.label}」流程开始 ==========`);
-  aiLayoutLog(`[步骤1] 模式: ${hasSel ? "选区" : "全文(未选中文字, 回退整篇)"}; 处理对象长度=${srcText ? srcText.length : 0} 字`);
-  aiLayoutLog(`[步骤2] 是否调用开源 skills: 否 —— 行内 AI 直接套用公众号《写东西卡壳？》文章提炼的创作类提示词(润色/改写/续写/翻译/摘要)，无外部进程`);
-  // 提示词模板（{text} 尚未替换）
-  aiLayoutLog(`[步骤3] 使用的提示词模板(取自创作类文章, 含 {text} 占位) ↓↓↓\n${act.prompt}`);
-  if (!srcText || !srcText.trim()) {
-    aiLayoutLog(`[步骤4] 文档为空，终止`);
-    aiLayoutLog(`========== 行内 AI「${act.label}」流程结束(空) ==========`);
-    setStatus("文档为空，无法「" + act.label + "」");
-    return;
-  }
-  const fullPrompt = act.prompt.replace(/\{text\}/g, srcText);
-  aiLayoutLog(`[步骤4] 发送给 AI 的完整 user 消息(提示词 + 正文, {text} 已替换为实际内容) ↓↓↓\n${fullPrompt}`);
-  aiLayoutLog(`[步骤4] 发送给 AI 的正文内容(实际处理对象) ↓↓↓\n${srcText}`);
-  const out = await askAI([{ role: "user", content: fullPrompt }], {
-    pending: "AI " + act.label + (hasSel ? "中…" : "（全文）中…"),
-  });
-  aiLayoutLog(`[步骤5] AI 返回: raw==null? ${out == null}; 返回长度=${out ? out.length : 0}; (详见 ai-debug.log 的 [req]/[resp])`);
-  if (out == null) {
-    aiLayoutLog(`========== 行内 AI「${act.label}」流程结束(AI 返回空/错误) ==========`);
-    return;
-  }
-  if (hasSel) {
-    // 续写：保留原文 + 续写内容；其余：直接替换选区
-    const insert = action === "continue" ? selText + "\n\n" + out.trim() : out.trim();
-    editor.insertText(insert);
-  } else {
-    // 全文模式：润色/改写/翻译/摘要 → 整篇替换；续写 → 末尾追加
-    if (action === "continue") {
-      editor.setValue(srcText + "\n\n" + out.trim());
-    } else {
-      editor.selectAll();
-      editor.insertText(out.trim());
-    }
-    onEditorChange();
-  }
-  aiLayoutLog(`[步骤6] 回填完成: 模式=${hasSel ? "替换选区" : (action === "continue" ? "文末追加" : "整篇替换")}; 结果长度=${out.length}`);
-  aiLayoutLog(`========== 行内 AI「${act.label}」流程结束(成功) ==========`);
-  setStatus("AI " + act.label + (hasSel ? "完成" : "（全文）完成"));
-  showAiTokens(act.label + (hasSel ? "" : "（全文）"));
-}
 
 /** 自动标题 / 标签：对全文调接口，回填文档标题与标签 */
 async function runAiTitleTags() {
   const md = currentMarkdown() || "";
   // ---- 详细日志（写入 ai-layout.log，与 AI 排版同文件）----
-  aiLayoutLog(`========== 行内 AI「自动标题/标签」流程开始 ==========`);
-  aiLayoutLog(`[步骤1] 模式: 全文(标题/标签必须看整篇); 取文档前 4000 字作为处理对象; 原文长度=${md.length} 字`);
-  aiLayoutLog(`[步骤2] 是否调用开源 skills: 否 —— 标题/标签为内置固定提示词，无外部进程`);
   if (!md.trim()) {
-    aiLayoutLog(`[步骤3] 文档为空，终止`);
-    aiLayoutLog(`========== 行内 AI「自动标题/标签」流程结束(空) ==========`);
     setStatus("文档为空，无法生成标题/标签");
     return;
   }
@@ -2654,12 +2142,7 @@ async function runAiTitleTags() {
     "请基于下面的文章生成：1) 一个简洁吸引人的标题（不超过20字）；2) 3-5 个关键词标签（逗号分隔）。" +
     "严格按如下格式输出，不要多余解释：\n标题：<标题>\n标签：<标签1>, <标签2>, ...\n\n";
   const fullPrompt = promptHead + md.slice(0, 4000);
-  aiLayoutLog(`[步骤3] 发送给 AI 的完整 user 消息(固定提示词 + 正文前 4000 字) ↓↓↓\n${fullPrompt}`);
-  aiLayoutLog(`[步骤3] 发送给 AI 的正文内容(实际处理对象, 仅前 4000 字) ↓↓↓\n${md.slice(0, 4000)}`);
-  const out = await askAI([{ role: "user", content: fullPrompt }], { pending: "AI 生成标题/标签中…" });
-  aiLayoutLog(`[步骤4] AI 返回: raw==null? ${out == null}; 返回长度=${out ? out.length : 0}; 原始返回 ↓↓↓\n${out || ""}`);
   if (out == null) {
-    aiLayoutLog(`========== 行内 AI「自动标题/标签」流程结束(AI 返回空/错误) ==========`);
     return;
   }
   const mt = out.match(/标题[：:]\s*(.+)/);
@@ -2681,8 +2164,6 @@ async function runAiTitleTags() {
   } else {
     setStatus("AI 返回格式异常：" + out.slice(0, 60));
   }
-  aiLayoutLog(`[步骤5] 回填完成: 标题=${mt ? mt[1].trim() : "(未解析)"}; 标签=${mg ? mg[1].trim() : "(未解析)"}`);
-  aiLayoutLog(`========== 行内 AI「自动标题/标签」流程结束(成功) ==========`);
   showAiTokens("AI 标题/标签");
 }
 
@@ -2692,10 +2173,6 @@ function aiDbg(msg) {
 }
 
 /** AI 排版专属详细日志：写入 <userData>/ai-layout.log，记录完整流程与提示词，便于核对 */
-function aiLayoutLog(msg) {
-  // ai-layout.log 已停用：不再生成该详细日志文件（如需恢复，把下面这行注释打开）
-  // try { window.api.debugLog(msg, "ai-layout.log"); } catch (_) {}
-}
 
 /** 全文 AI 排版：调用 gzh-design-skill 方法论，生成公众号兼容内联 HTML，进发布弹窗预览/复制 */
 function showAiBusy(text) {
@@ -2710,115 +2187,6 @@ function hideAiBusy() {
   if (el) el.classList.add("hidden");
 }
 
-async function runAiLayout(theme, opts) {
-  const f = activeFile();
-  // 编辑器缓冲区即最新内容（是否保存到磁盘都不改变它）
-  const rawMd = currentMarkdown() || "";
-  // ===== 详细流程日志：写入 <userData>/ai-layout.log =====
-  aiLayoutLog("========== AI 排版流程开始 ==========");
-  aiLayoutLog(`[步骤1] 读取编辑器内容: hasFile=${!!f}, 已有路径=${f && f.path ? f.path : "(未保存)"}, 原始md长度=${rawMd.length} 字`);
-  // 1) 字数拦截：超过 6000 字直接拦，避免撑爆模型上下文（HTTP 400 或 finish_reason=length）
-  if (rawMd.length > 6000) {
-    aiLayoutLog(`[步骤2] 字数拦截: 当前 ${rawMd.length} 字 > 阈值 6000 → 拦截，终止`);
-    showAlert("无法 AI 排版", `内容超过 6000 字（当前 ${rawMd.length} 字），请删减内容后再进行排版`);
-    aiDbg(`runAiLayout: 内容超长(${rawMd.length} 字)，终止`);
-    aiLayoutLog("========== AI 排版流程结束(字数超限) ==========");
-    return;
-  }
-  // 2) 图片拦截：图片内联成 base64 会让请求/响应双向膨胀，AI 又看不懂 base64，直接拦
-  if (/@img:/.test(rawMd)) {
-    aiLayoutLog(`[步骤2] 图片拦截: 检测到 @img 占位 → 拦截，终止`);
-    showAlert("无法 AI 排版", "当前文档含图片，请删除图片后再进行 AI 排版");
-    aiDbg("runAiLayout: 检测到图片占位，终止");
-    aiLayoutLog("========== AI 排版流程结束(含图片) ==========");
-    return;
-  }
-  const md = expandMarkdown(rawMd);
-  aiLayoutLog(`[步骤2] 字数(${rawMd.length}<=6000)/图片(无) 拦截: 通过`);
-  aiLayoutLog(`[步骤3] 是否调用开源 skills: 是 —— 注入 gzh-design-skill 方法论(6 套主题 + 公众号兼容性铁律 + 招牌特性)，无外部进程调用`);
-  if (!md.trim()) {
-    aiLayoutLog("[步骤4] 文档为空，终止");
-    setStatus("文档为空，无法 AI 排版");
-    aiDbg("runAiLayout: 文档为空，终止");
-    aiLayoutLog("========== AI 排版流程结束(空文档) ==========");
-    return;
-  }
-  // 仅当文档已有保存路径时静默保存；未保存文档跳过，避免弹出「保存到哪」对话框打断 AI 流程
-  if (f && f.path) {
-    try { await saveCurrentFile(); aiLayoutLog("[步骤4] 文档已静默保存(有路径)"); aiDbg("runAiLayout: 已静默保存(有路径)"); }
-    catch (e) { aiLayoutLog("[步骤4] 保存异常: " + (e && e.message)); aiDbg("runAiLayout: 保存异常 " + (e && e.message)); }
-  } else {
-    aiLayoutLog("[步骤4] 未保存文档，跳过保存弹框，直接用编辑器当前内容");
-    aiDbg("runAiLayout: 未保存文档，跳过保存弹框，直接用编辑器当前内容");
-  }
-  const instruction = buildAiLayoutInstruction(theme && theme.id ? theme.id : null);
-  aiLayoutLog(`[步骤5] 注入的提示词(方法论, 取自 gzh-design-skill) ↓↓↓\n${instruction}`);
-  aiLayoutLog(`[主题] ${theme && theme.name ? "指定主题：" + theme.name + "（主色 " + theme.mainColor + "）" : "让 AI 自由决定（不指定）"}`);
-  const messages = buildAiLayoutMessages(md, theme, opts);
-  const totalChars = messages.reduce((s, m) => s + (m.content || "").length, 0);
-  aiLayoutLog(`[步骤6] 发送给 AI 的完整 user 消息: 条数=${messages.length}, role=${messages[0].role}, 总字符≈${totalChars}`);
-  aiLayoutLog(`[步骤6] 发送给 AI 的正文 md(实际内容) ↓↓↓\n${md}`);
-  aiDbg(`runAiLayout: 发往AI的消息数=${messages.length}, 首条role=${messages[0].role}, 总字符≈${totalChars}`);
-  showAiBusy("正在排版中…");
-  try {
-    const raw = await askAI(messages, { maxTokens: 32768, timeoutMs: 600000 });
-    const truncated = !!(lastAiResponse && lastAiResponse.truncated);
-    aiLayoutLog(`[步骤7] AI 返回: raw==null? ${raw == null}; 返回长度=${raw ? raw.length : 0}; 截断=${truncated}; (详见 ai-debug.log 的 [req]/[resp])`);
-    aiDbg(`runAiLayout: askAI 返回 raw==null? ${raw == null}; raw长度=${raw ? raw.length : 0}`);
-    if (raw == null) { aiDbg("runAiLayout: AI 返回 null，终止(askAI 已提示)"); aiLayoutLog("========== AI 排版流程结束(AI 返回空/错误) =========="); return; } // askAI 已提示
-    // 输出被截断：不完整的 HTML 不应展示给用户，避免把半成品当成品
-    if (truncated) {
-      setStatus("⚠️ AI 排版被截断（输出 token 超限），未生成完整 HTML，已停止展示。建议：删减正文 / 改用输出长度更大的模型 / 重试");
-      aiDbg("runAiLayout: 截断，不展示不完整结果");
-      aiLayoutLog("========== AI 排版流程结束(截断, 不展示) ==========");
-      return;
-    }
-    const html = stripCodeFence(raw);
-    const visible = html.replace(/<[^>]*>/g, "").replace(/&nbsp;|&#?\w+;/g, " ").trim();
-    aiDbg(`runAiLayout: strip后 html长度=${html.length}, 可见文字长度=${visible.length}`);
-    aiLayoutLog(`[步骤8] 清洗后 HTML: html长度=${html.length}, 可见文字长度=${visible.length}`);
-    // 去掉标签与实体后看是否有可见文字——max_tokens 偏小或模型名不对时会返回空内容
-    if (!html || !visible) {
-      setStatus(`AI 排版返回为空（原始 ${raw.length} 字符）。多半是 max_tokens 偏小或模型名不对，请检查「AI 模型」设置`);
-      aiDbg("runAiLayout: 可见内容为空，终止(不弹空白框)");
-      aiLayoutLog("========== AI 排版流程结束(可见内容为空) ==========");
-      return;
-    }
-    pubState.aiHtml = html;
-    // 写入 AI 排版历史记录（按当前文档存储，随 session.json 持久化）
-    {
-      const hf = activeFile();
-      if (hf) {
-        hf.aiLayoutHistory = hf.aiLayoutHistory || [];
-        const hm = getActiveModel();
-        const hu = lastAiResponse && lastAiResponse.usage;
-        hf.aiLayoutHistory.unshift({
-          id: "h" + Date.now(),
-          time: Date.now(),
-          model: (hm && (hm.name || hm.model)) || "未知模型",
-          inT: hu ? (hu.prompt_tokens || 0) : 0,
-          outT: hu ? (hu.completion_tokens || 0) : 0,
-          sourceLen: rawMd.length,
-          html,
-        });
-        if (hf.aiLayoutHistory.length > 30) hf.aiLayoutHistory.length = 30;
-        scheduleSessionSave();
-      }
-    }
-    pubState.showOriginal = false;
-    state.previewAi = true;
-    refreshAiViewBtn();
-    updatePreviewAiBar();
-    // 在分屏预览直接展示 AI 排版结果（替代弹出预览）
-    if (state.mode === "source") setMode("split");
-    else renderPreview();
-    setStatus("AI 排版完成，已在右侧预览（可切「原文」对比，或复制/保存到公众号）");
-    showAiTokens("AI 排版");
-    aiLayoutLog("========== AI 排版流程结束(成功) ==========");
-  } finally {
-    hideAiBusy();
-  }
-}
 
 /** 把选区 AI 菜单定位到「选中文字正下方」（而非 AI 按钮处），避免飘到左上角 */
 function positionAiMenuUnderSelection(menu) {
@@ -2853,8 +2221,6 @@ function bindAiUI() {
       menu.classList.add("hidden");
       bar.classList.add("hidden");
       if (kind === "title") runAiTitleTags();
-      else if (kind === "layout") runAiLayout();
-      else runAiInline(kind);
     });
   });
   aiBtn.addEventListener("mousedown", (e) => e.preventDefault());
@@ -2941,7 +2307,6 @@ function bindAiModelSwitcher() {
     cfg.textContent = "管理模型…";
     cfg.addEventListener("click", () => {
       menu.classList.add("hidden");
-      openAiSettingsModal();
       refreshLabel();
     });
     menu.appendChild(cfg);
@@ -3042,7 +2407,6 @@ function bindPublishMenu() {
     copyWechat.addEventListener("click", (e) => {
       e.stopPropagation();
       if (copyWechat.disabled) return; // 禁用态（未开启手动排版）不打开预览
-      openPublishModal("wechat");
     });
   // AI 排版按钮：先弹主题选择（可选），再调 AI 生成
   if (els.btnAiLayout)
@@ -3060,13 +2424,11 @@ function bindPublishMenu() {
         if (!item) return;
         const t = DESIGN_LANGUAGES.find((x) => x.id === item.dataset.id);
         if (aiThemeModal) aiThemeModal.classList.add("hidden");
-        runAiLayout(t || null, aiLayoutOpts());
       });
     const aiThemeSkip = document.getElementById("ai-theme-skip");
     if (aiThemeSkip)
       aiThemeSkip.addEventListener("click", () => {
         if (aiThemeModal) aiThemeModal.classList.add("hidden");
-        runAiLayout(null, aiLayoutOpts());
       });
     const aiThemeClose = document.getElementById("ai-theme-close");
     if (aiThemeClose) aiThemeClose.addEventListener("click", () => { if (aiThemeModal) aiThemeModal.classList.add("hidden"); });
@@ -3077,7 +2439,6 @@ function bindPublishMenu() {
   if (els.btnAiView)
     els.btnAiView.addEventListener("click", (e) => {
       e.stopPropagation();
-      showAiPreview();
     });
   // 初始同步一次导出菜单可见项
   refreshExportMenu();
@@ -3092,22 +2453,6 @@ function refreshAiViewBtn() {
 }
 
 /** 分屏预览顶部的 AI 排版工具条：AI 排版/原文切换 + 复制/保存/退出 */
-function updatePreviewAiBar() {
-  const bar = document.getElementById("preview-ai-bar");
-  if (!bar) return;
-  const show = state.previewAi && pubState.aiHtml != null;
-  bar.classList.toggle("hidden", !show);
-  // 同步当前是「AI 排版」还是「原文」
-  bar.querySelectorAll(".pab-av").forEach((b) =>
-    b.classList.toggle("active", b.dataset.aiView === (pubState.showOriginal ? "original" : "layout"))
-  );
-  const editBtn = document.getElementById("preview-ai-edit");
-  if (editBtn) {
-    editBtn.classList.toggle("active", pubState.aiEditable !== false);
-    // 「原文」视图不可编辑（那是 Markdown 管线渲染的对比视图）
-    editBtn.disabled = !!pubState.showOriginal;
-  }
-}
 
 /* ---------- AI 排版结果「就地改文字」 ----------
  * 排版结果是纯内联样式 HTML，直接把预览容器设成 contenteditable 即可编辑；
@@ -3127,14 +2472,6 @@ function setAiPreviewEditable(on) {
 }
 
 /** 把预览里用户改过的 HTML 回写到 pubState.aiHtml（复制/保存/推送前必须调用） */
-function syncAiHtmlFromPreview() {
-  if (!els.preview) return;
-  if (!state.previewAi || pubState.showOriginal) return;
-  if (pubState.aiEditable === false) return;
-  if (!els.preview.isContentEditable) return;
-  const html = els.preview.innerHTML;
-  if (html && html.trim()) pubState.aiHtml = html;
-}
 
 /** 预览里编辑时防抖回写（避免每敲一个字都拼一次整篇字符串） */
 function bindAiPreviewEditing() {
@@ -3143,7 +2480,6 @@ function bindAiPreviewEditing() {
     if (!els.preview.isContentEditable) return;
     clearTimeout(aiEditSyncTimer);
     aiEditSyncTimer = setTimeout(() => {
-      syncAiHtmlFromPreview();
       setStatus("排版内容已修改（复制 / 保存 / 推送将使用修改后的内容）");
     }, 300);
   });
@@ -3157,23 +2493,8 @@ function bindAiPreviewEditing() {
 }
 
 /** 进入分屏 AI 预览（不重新调 AI）：用于「查看排版」按钮 */
-function showAiPreview() {
-  if (pubState.aiHtml == null) return;
-  state.previewAi = true;
-  pubState.showOriginal = false;
-  updatePreviewAiBar();
-  if (state.mode === "source") setMode("split");
-  else renderPreview();
-}
 
 /** 退出分屏 AI 预览，恢复普通 Markdown 预览（由编辑/撤销/切文档/关闭触发） */
-function exitAiPreview() {
-  if (!state.previewAi) return;
-  syncAiHtmlFromPreview(); // 保留用户在预览里改过的文字
-  setAiPreviewEditable(false);
-  state.previewAi = false;
-  updatePreviewAiBar();
-}
 
 /* ===================== AI 排版历史记录 ===================== */
 function aiHistoryOf() {
@@ -3275,7 +2596,6 @@ function restoreAiHistoryEntry(id) {
   pubState.showOriginal = false;
   state.previewAi = true;
   refreshAiViewBtn();
-  updatePreviewAiBar();
   closeAiHistory();
   if (state.mode === "source") setMode("split");
   else renderPreview();
@@ -3306,9 +2626,7 @@ function bindPreviewAiBar() {
   if (!bar) return;
   bar.querySelectorAll(".pab-av").forEach((b) =>
     b.addEventListener("click", () => {
-      syncAiHtmlFromPreview(); // 切视图前先保住已改的文字
       pubState.showOriginal = b.dataset.aiView === "original";
-      updatePreviewAiBar();
       renderPreview();
     })
   );
@@ -3316,17 +2634,14 @@ function bindPreviewAiBar() {
   const editBtn = document.getElementById("preview-ai-edit");
   if (editBtn)
     editBtn.addEventListener("click", () => {
-      syncAiHtmlFromPreview();
       pubState.aiEditable = pubState.aiEditable === false;
       setAiPreviewEditable(pubState.aiEditable && !pubState.showOriginal);
-      updatePreviewAiBar();
       setStatus(pubState.aiEditable ? "已开启：可直接在预览里改文字" : "已关闭编辑，预览为只读");
     });
   const copyBtn = document.getElementById("preview-ai-copy");
   if (copyBtn)
     copyBtn.addEventListener("click", async () => {
       if (!pubState.aiHtml) return;
-      syncAiHtmlFromPreview();
       const ok = await copyPlatformResult({ kind: "html", html: pubState.aiHtml, platform: PLATFORMS.wechat });
       if (ok) {
         showToast("✅ 已复制成功，去公众号后台 Ctrl+V 粘贴");
@@ -3345,7 +2660,6 @@ function bindPreviewAiBar() {
   if (saveBtn)
     saveBtn.addEventListener("click", async () => {
       if (!pubState.aiHtml) return;
-      syncAiHtmlFromPreview();
       const f = activeFile();
       const base = (f && f.name ? f.name.replace(/\.md$/i, "") : "ai-layout") + "-排版";
       const p = await window.api.choosePath(base, "html");
@@ -3356,7 +2670,6 @@ function bindPreviewAiBar() {
   const closeBtn = document.getElementById("preview-ai-close");
   if (closeBtn)
     closeBtn.addEventListener("click", () => {
-      exitAiPreview();
       renderPreview();
     });
   const histBtn = document.getElementById("preview-ai-history");
@@ -3381,7 +2694,6 @@ function bindPreviewAiBar() {
  * 流程：校验凭证 → 弹确认框（标题/作者/摘要/封面）→ 生成/选取封面 → 主进程代发微信 API。
  */
 async function pushAiHtmlToWechat(btn) {
-  syncAiHtmlFromPreview(); // 推送前先把预览里改过的文字回写
   if (!pubState.aiHtml) {
     showToast("⚠️ 请先生成 AI 排版");
     return;
@@ -3625,7 +2937,6 @@ function selectPubMode(mode) {
   const manual = mode === "manual";
   const none = mode === "none" || !mode;
   // 退出 AI 排版预览（如有），回到实时 Markdown 预览
-  if (state.previewAi) { state.previewAi = false; updatePreviewAiBar(); }
   document.body.classList.toggle("ai-layout-mode", ai);
   document.body.classList.toggle("pub-mode", manual);
   const tpl = document.getElementById("btn-template");
@@ -3683,12 +2994,7 @@ function setPublishMode(on) {
  * 组件判定：正文含 tmpl-keep 标记（组件骨架）；主题判定：当前文档带了主题。
  */
 function docHasComponentOrTheme() {
-  const f = activeFile();
-  if (f && f.theme) return true;
-  const md = currentMarkdown() || "";
-  // 只匹配真正的组件骨架 <div class="tmpl-keep ...">（与 templates.js / insertComponent 写入格式一致），
-  // 避免正文里出现「tmpl-keep」字样（如说明文字）被误判为组件而禁用复制/限制导出。
-  return /class=["']tmpl-keep/.test(md);
+  return false;
 }
 
 /** 按模式刷新导出菜单：限制时仅保留「长图(png) / HTML(html)」两项 */
@@ -3704,7 +3010,6 @@ function refreshExportMenu() {
 
 async function doPublish(kind) {
   // 复制类一律先开预览：粘到后台才发现样式跑偏的返工成本太高
-  if (kind === "wechat-html") return openPublishModal("wechat");
 }
 
 /* ---------------- 发布预览弹窗 ---------------- */
@@ -3731,19 +3036,11 @@ function renderPublishPreview() {
       platform: PLATFORMS.wechat,
     };
   } else {
-    pubState.result = buildPlatformContent(currentMarkdown(), getActiveTheme(), {
-      platform: pubState.platform,
-      fullDoc: true,
-    });
   }
 
   // iframe 展示内容：AI 模式且切到「原文」时，用现有 wechat 管线渲染原 md 作对比
   let doc;
   if (isAi && pubState.showOriginal) {
-    const orig = buildPlatformContent(currentMarkdown(), getActiveTheme(), {
-      platform: "wechat",
-      fullDoc: true,
-    });
     doc = orig.html;
   } else if (pubState.result.kind === "markdown") {
     doc = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:12px;background:#fff;">${pubState.result.inner}</body></html>`;
@@ -3798,26 +3095,6 @@ function setPublishWidth(w) {
   if (els.pubFrame.contentDocument) els.pubFrame.onload();
 }
 
-function openPublishModal(platform) {
-  pubState.platform = platform || "wechat";
-  pubState.showOriginal = false;
-  if (els.pubAiToggle)
-    els.pubAiToggle.querySelectorAll(".pub-av").forEach((x) => x.classList.toggle("active", x.dataset.aiView === "layout"));
-  els.pubTabs.querySelectorAll(".pub-tab").forEach((b) => {
-    b.classList.toggle("active", b.dataset.platform === pubState.platform);
-  });
-  els.pubSrcToggle.checked = false;
-  els.pubFrame.classList.remove("hidden");
-  els.pubSrc.classList.add("hidden");
-  setPublishWidth(pubState.width);
-  try {
-    renderPublishPreview();
-  } catch (e) {
-    setStatus("预览生成失败：" + (e && e.message));
-    return;
-  }
-  els.pubModal.classList.remove("hidden");
-}
 
 function closePublishModal() {
   els.pubModal.classList.add("hidden");
@@ -4713,12 +3990,6 @@ function deleteFile(id) {
 }
 
 /* ---------- 主题 / 专注 ---------- */
-function toggleTheme() {
-  const isLight = document.documentElement.classList.toggle("light");
-  localStorage.setItem("theme", isLight ? "light" : "dark");
-  reinitMermaid(); // Mermaid 图表配色跟随主题
-  if (state.mode !== "source") renderPreview();
-}
 function toggleFocus() {
   const on = document.body.classList.toggle("focus-mode");
   els.btnFocus.classList.toggle("active", on);
@@ -4794,10 +4065,6 @@ function updateCharCount() {
 
 /* ---------- AI 排版主题选择弹窗 ---------- */
 /** 读取主题弹窗里的「插入图片占位块」开关，传给 AI 排版（默认开启） */
-function aiLayoutOpts() {
-  const cb = document.getElementById("ai-img-ph");
-  return { imgPlaceholder: cb ? cb.checked : true };
-}
 function openAiThemeModal() {
   const modal = document.getElementById("ai-theme-modal");
   const grid = document.getElementById("ai-theme-grid");
