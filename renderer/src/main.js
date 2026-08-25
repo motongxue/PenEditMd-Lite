@@ -445,6 +445,17 @@ async function checkBackend(attempt = 1) {
 }
 
 /* ---------- 事件绑定 ---------- */
+
+/** 轻量版隔离守卫：被移除功能（发布/主题/AI）的绑定函数可能在访问已删元素时抛错，
+ *  包一层 try/catch，单处失败不中断后续事件绑定。 */
+function safeBind(fn) {
+  try {
+    fn();
+  } catch (e) {
+    console.warn("[lite] skip bind", fn && fn.name, e);
+  }
+}
+
 function bindEvents() {
   els.btnOpen.addEventListener("click", openFiles);
   els.btnOpen3.addEventListener("click", openFiles);
@@ -457,7 +468,7 @@ function bindEvents() {
   // 这里不要再直接绑 exportMarkdown，否则点击时会"既展开菜单又直接弹出 MD 另存对话框"。
   els.btnClear.addEventListener("click", clearAll);
   els.btnToggle.addEventListener("click", toggleSidebar);
-  els.btnTheme.addEventListener("click", undefined);
+  // 轻量版已移除「主题」按钮：原 els.btnTheme 元素已不存在，跳过绑定，避免 null.addEventListener 抛错中断后续所有事件绑定。
   els.btnFocus.addEventListener("click", toggleFocus);
   els.btnRich.addEventListener("click", () => switchEditorType("richtext"));
   els.btnSource.addEventListener("click", () => switchEditorType("source"));
@@ -482,9 +493,12 @@ function bindEvents() {
   bindPreviewExpand();
   // 导出下拉菜单 + 查找替换 + 专注模式增强
   bindExportMenu();
-  bindPublishMenu();
-  bindPublishModal();
-  bindThemeUI();
+  // 轻量版已移除「公众号发布 / 主题 / 组件 / AI」整套功能，相关按钮与弹窗已从 index.html 删除，
+  // 对应 els 为 null。这些绑定函数若直接调用会在访问 null 元素时抛错，进而中断后续（含侧栏便签标签页、
+  // 查找等）绑定。用 safeBind 隔离，单处失败不影响其余界面交互。
+  safeBind(bindPublishMenu);
+  safeBind(bindPublishModal);
+  safeBind(bindThemeUI);
   bindStyleModal();
   bindBlockFormatHint();
   bindFind();
@@ -1538,7 +1552,8 @@ function setActionsEnabled(on) {
   _actionsFileOpen = on;
   updateCopyButton();
   els.btnExport.disabled = !on;
-  els.btnPublish.disabled = !on;
+  // 轻量版已移除「公众号发布」按钮（els.btnPublish 为 null），此处加守卫，避免运行期抛错。
+  if (els.btnPublish) els.btnPublish.disabled = !on;
   els.btnSave.disabled = !on;
   updateHistoryButtons();
   setToolbarEnabled(els.formatGroup, on);
