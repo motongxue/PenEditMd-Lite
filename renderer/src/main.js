@@ -1926,12 +1926,42 @@ async function copyMarkdown() {
 }
 
 async function exportMarkdown() {
-  const md = expandMarkdown(currentMarkdown());
-  if (!md) return;
+  const fullMd = expandMarkdown(currentMarkdown());
+  if (!fullMd) return;
   const f = activeFile();
   const base = (f ? f.name : "document").replace(/\.[^.]+$/, "");
-  const path = await window.api.saveFile(base + ".md", md, "md");
-  if (path) setStatus("已导出 " + path);
+  const p = await window.api.choosePath(base + ".md", "md");
+  if (!p) {
+    setStatus("已取消导出");
+    return;
+  }
+
+  // 与「保存」一致的图片策略：archive = 抽出真实图片到 assets/，md 改用相对路径，
+  // 这样导出的 .md 在 Typora / VS Code / Obsidian 等其它_md_应用里都能正常打开。
+  let finalMd = fullMd;
+  let archived = 0;
+  if (loadImgStrategy() === "archive") {
+    const imgs = extractBase64Images(fullMd);
+    if (imgs.length) {
+      const dir = p.replace(/[\\/][^\\/]*$/, "");
+      const ok = await window.api.archiveAssets(dir, imgs);
+      if (ok) {
+        finalMd = toAssetRefMd(fullMd);
+        archived = ok;
+      }
+    }
+  }
+
+  const okWrite = await window.api.writeTextFile(p, finalMd);
+  if (okWrite) {
+    setStatus(
+      archived
+        ? `已导出 ${p}（${archived} 张图片已归档到 assets/）`
+        : `已导出 ${p}`
+    );
+  } else {
+    setStatus("导出失败，请检查文件是否被占用或路径不可写");
+  }
 }
 
 /* ---------- 导出体积控制（#5）：公众号/头条 md ≤15MB，超限自动压缩图片 ---------- */
