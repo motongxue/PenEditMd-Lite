@@ -17,7 +17,7 @@ import { expandMarkdown, getImageById, shrinkMarkdown, isDocImageLight, snapshot
 import { buildExportHtml } from "./exporter.js";
 import { setStatusSink } from "./status.js";
 import { bindEditorContextMenu } from "./editorMenu.js";
-import { openLocalImageFile } from "./prompt.js";
+import { openLocalImageFile, promptText } from "./prompt.js";
 import { showContextMenu } from "./contextmenu.js";
 import { positionMenuUnder, closeAllMenus } from "./bodyMenu.js";
 import { openSettingsModal, openAiSettingsModal, actionForEvent, loadImgStrategy, loadAiSettings, loadAiModels, getActiveModel, setAiActiveId, openWechatSettingsModal, openWechatPushModal, loadWechatCfg, isWechatReady } from "./settings.js";
@@ -480,6 +480,7 @@ function bindEvents() {
   els.btnToggle.addEventListener("click", toggleSidebar);
   els.btnTheme.addEventListener("click", toggleTheme);
   els.btnFocus.addEventListener("click", toggleFocus);
+  bindFileListContextMenu();
   els.btnRich.addEventListener("click", () => switchEditorType("richtext"));
   els.btnSource.addEventListener("click", () => switchEditorType("source"));
 
@@ -1144,6 +1145,57 @@ function renderList() {
     els.files.appendChild(li);
   });
   els.fileCount.textContent = `${state.files.length} 个文件`;
+}
+
+/* ---------- 会话列表右键：打开文件所在位置 / 重命名 ---------- */
+function bindFileListContextMenu() {
+  if (!els.files) return;
+  els.files.addEventListener("contextmenu", (e) => {
+    const li = e.target.closest?.("li[data-id]");
+    if (!li) return; // 点空白处不拦截，走默认菜单
+    const id = li.dataset.id;
+    const f = state.files.find((x) => x.id === id);
+    if (!f) return;
+    e.preventDefault();
+    const items = [];
+    // 打开文件所在位置：仅磁盘文件（有 path）才可用
+    if (f.path) {
+      items.push({
+        label: "打开文件所在位置",
+        action: () => {
+          try { window.api.showInFolder(f.path); } catch (_) {}
+        },
+      });
+    }
+    items.push({ label: "重命名", action: () => renameSessionFile(f) });
+    showContextMenu(items, e.clientX, e.clientY);
+  });
+}
+
+/** 重命名会话文档：磁盘文件改名落盘，内存文档仅改显示名 */
+async function renameSessionFile(f) {
+  const old = f.name || "";
+  const nn = await promptText("重命名", old);
+  if (!nn || nn === old) return;
+  if (f.path) {
+    const dir = f.path.replace(/[\\/][^\\/]*$/, "");
+    const base = f.path.split(/[\\/]/).pop();
+    let np = null;
+    try {
+      np = await window.api.renamePath(dir, base, nn);
+    } catch (_) {
+      np = null;
+    }
+    if (!np) {
+      setStatus("重命名失败（名称无效或已存在）");
+      return;
+    }
+    f.path = np;
+  }
+  f.name = nn;
+  renderList();
+  scheduleSessionSave();
+  setStatus("已重命名为 " + nn);
 }
 
 function activeFile() {
