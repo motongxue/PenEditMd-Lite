@@ -861,9 +861,11 @@ async function convertByPaths(paths) {
         if (!r || !r.ok) {
           lastId = addResult(name, null, (r && r.error) || "读取失败");
         } else {
-          // 把 Markdown 里引用的本地图片（如 Typora 的 C:\...\xx.png）内联为 base64
+          // 1) 把 Markdown 里引用的本地图片（如 Typora 的 C:\...\xx.png）读成 base64 并注册为 @img 占位符
           const inlined = await inlineLocalImages(r.text, p.replace(/[\\/][^\\/]*$/, ""));
-          lastId = addResult(name, inlined, null, true, true, p);
+          // 2) 把文内已有的 data: 内嵌图片也统一收编为 @img 占位符（启用折叠 / 图片管理）
+          const normalized = shrinkMarkdown(inlined);
+          lastId = addResult(name, normalized, null, true, true, p);
         }
         continue;
       }
@@ -873,7 +875,9 @@ async function convertByPaths(paths) {
         body: JSON.stringify({ path: p }),
       });
       const data = await res.json();
-      lastId = addResult(name, data.markdown, data.error);
+      // 后端转换产物常含 data: 内嵌图，统一收编为 @img 占位符（启用折叠 / 图片管理）
+      const normalized = shrinkMarkdown(data.markdown || "");
+      lastId = addResult(name, normalized, data.error);
     } catch (err) {
       lastId = addResult(name, null, err.message);
     }
@@ -1016,7 +1020,8 @@ async function openDiskFile(filePath) {
   const name = filePath.split(/[\\/]/).pop();
   // 把 Markdown 里引用的本地图片（如 Typora 的 C:\...\xx.png）内联为 base64
   const inlined = await inlineLocalImages(md, filePath.replace(/[\\/][^\\/]*$/, ""));
-  const id = addResult(name, inlined, null, true, true, filePath);
+  const normalized = shrinkMarkdown(inlined);
+  const id = addResult(name, normalized, null, true, true, filePath);
   // 显式选中并渲染：避免首开时 addResult 内部 takeover 逻辑未触发 select 导致编辑区空白
   selectFile(id);
   setStatus("已打开 " + filePath);
