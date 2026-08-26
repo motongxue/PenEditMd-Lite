@@ -13,7 +13,7 @@ import { createEditor } from "./editor.js";
 import { buildToolbar, setToolbarEnabled } from "./toolbar.js";
 import { renderMarkdownInto, bindAnchorClick, reinitMermaid, renderRawHtml } from "./preview.js";
 import { perfReset, perfStage } from "./perf.js";
-import { expandMarkdown, getImageById, shrinkMarkdown, isDocImageLight, snapshotImages, restoreImages, replaceImage } from "./imageStore.js";
+import { expandMarkdown, getImageById, shrinkMarkdown, isDocImageLight, snapshotImages, restoreImages, replaceImage, registerImage } from "./imageStore.js";
 import { buildExportHtml } from "./exporter.js";
 import { setStatusSink } from "./status.js";
 import { bindEditorContextMenu } from "./editorMenu.js";
@@ -753,6 +753,68 @@ function pickImageFile() {
 }
 
 /* ---------- 文件转换 ---------- */
+/**
+ * 把 Markdown 里引用的「本地图片文件」内联为 base64（@img 占位符）。
+ *
+ * 背景：从 Typora / 其它编辑器导入的 .md，图片常写成「本地绝对路径」，
+ * 如 ![x](C:\Users\...\image.png)。这种路径没有 file:// 前缀、且是反斜杠，
+ * 浏览器无法加载，预览一片空白。
+ *
+ * 处理：扫描 ![alt](src)，跳过远程(http/https)/已内嵌(data:/@img:)，
+ * 把剩余的本地路径（绝对或相对 baseDir）读成 base64 并注册进 imageStore，
+ * 再把原语法替换为 ![alt](@img:id:name)。这样既能在预览/导出里正常显示，
+ * 又让文档自带图片、不依赖外部文件位置（可移植）。
+ *
+ * @param {string} md 原始 Markdown 文本
+ * @param {string} baseDir 用于解析相对路径的基准目录（通常为 .md 文件所在目录）
+ * @returns {Promise<string>} 处理后的 Markdown
+ */
+async function inlineLocalImages(md, baseDir) {
+  if (!md) return md;
+  const IMG_RE = /!\[([^\]]*)\]\(\s*([^)\s]+?)\s*\)/g;
+  const hits = [];
+  let m;
+  IMG_RE.lastIndex = 0;
+  while ((m = IMG_RE.exec(md))) {
+    const alt = m[1];
+    const src = m[2];
+    if (/^(https?:|data:|@img:)/i.test(src)) continue; // 远程 / 已内嵌：跳过
+    let abs;
+    if (/^[a-zA-Z]:[\\/]/.test(src) || src.startsWith("/")) {
+      abs = src; // Windows 盘符绝对路径 或 Unix 绝对路径
+    } else if (baseDir) {
+      abs = baseDir.replace(/[\\/]$/, "") + "/" + src.replace(/^\.\//, "");
+    } else {
+      continue;
+    }
+    abs = abs.replace(/\\/g, "/"); // 归一化分隔符，主进程读取更稳
+    hits.push({ index: m.index, raw: m[0], alt, abs });
+  }
+  if (!hits.length) return md;
+  const results = await Promise.all(
+    hits.map(async (it) => {
+      try {
+        const r = await window.api.readMedia(it.abs);
+        if (r && r.dataUri) {
+          const ph = registerImage(r.dataUri, it.alt || "");
+          return { ...it, ph };
+        }
+      } catch (_) {
+        /* 读取失败：保留原样，不丢数据 */
+      }
+      return { ...it, ph: null };
+    })
+  );
+  // 从后往前替换，避免索引偏移
+  let out = md;
+  for (let i = results.length - 1; i >= 0; i--) {
+    const it = results[i];
+    if (!it.ph) continue;
+    out = out.slice(0, it.index) + `![${it.alt}](${it.ph})` + out.slice(it.index + it.raw.length);
+  }
+  return out;
+}
+
 async function openFiles() {
   const paths = await window.api.openFile(state.formats);
   if (!paths || !paths.length) return;
@@ -781,7 +843,9 @@ async function convertByPaths(paths) {
         if (!r || !r.ok) {
           lastId = addResult(name, null, (r && r.error) || "读取失败");
         } else {
-          lastId = addResult(name, r.text, null, true, true, p);
+          // 把 Markdown 里引用的本地图片（如 Typora 的 C:\...\xx.png）内联为 base64
+          const inlined = await inlineLocalImages(r.text, p.replace(/[\\/][^\\/]*$/, ""));
+          lastId = addResult(name, inlined, null, true, true, p);
         }
         continue;
       }
@@ -932,7 +996,9 @@ async function openDiskFile(filePath) {
     return;
   }
   const name = filePath.split(/[\\/]/).pop();
-  const id = addResult(name, md, null, true, true, filePath);
+  // 把 Markdown 里引用的本地图片（如 Typora 的 C:\...\xx.png）内联为 base64
+  const inlined = await inlineLocalImages(md, filePath.replace(/[\\/][^\\/]*$/, ""));
+  const id = addResult(name, inlined, null, true, true, filePath);
   // 显式选中并渲染：避免首开时 addResult 内部 takeover 逻辑未触发 select 导致编辑区空白
   selectFile(id);
   setStatus("已打开 " + filePath);
