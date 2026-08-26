@@ -15,7 +15,8 @@
  */
 
 const PLACEHOLDER_RE = /!\[([^\]]*)\]\(@img:(\d+):([^)]+)\)/g;
-const BASE64_IMG_RE = /!\[([^\]]*)\]\((data:image\/[a-zA-Z0-9+.-]+;base64,[a-zA-Z0-9+/=]+)\)/g;
+// 支持 image/* 以及 Word/Typora/剪贴板等场景下的 application/octet-stream 通用二进制流图片
+const BASE64_IMG_RE = /!\[([^\]]*)\]\((data:(?:image\/[a-zA-Z0-9+.-]+|application\/octet-stream);base64,[a-zA-Z0-9+/=]+)\)/g;
 
 let nextId = 0;
 const map = new Map(); // id -> { dataUri, filename }
@@ -36,6 +37,27 @@ function makeFilename(alt, dataUri) {
   if (alt) return alt.replace(/[\\/:*?"<>|]/g, "_").slice(0, 40);
   const mime = dataUri.match(/data:image\/([^;]+)/)?.[1] || "png";
   return `image.${extFromMime(`image/${mime}`)}`;
+}
+
+/**
+ * 规范化图片 data URI：剪贴板/部分转换工具会把图片标成 `application/octet-stream`，
+ * 浏览器 preview 无法按图片渲染。若 alt 或 filename 能推断出图片扩展名，则把 MIME 改回 image/*。
+ */
+function normalizeImageDataUri(dataUri, alt = "") {
+  if (typeof dataUri !== "string") return dataUri;
+  if (!dataUri.startsWith("data:application/octet-stream;base64,")) return dataUri;
+  const ext = (alt.match(/\.([a-zA-Z0-9]+)$/)?.[1] || "png").toLowerCase();
+  const mimeMap = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    bmp: "image/bmp",
+    svg: "image/svg+xml",
+  };
+  const mime = mimeMap[ext] || "image/png";
+  return dataUri.replace(/^data:application\/octet-stream;base64,/, `data:${mime};base64,`);
 }
 
 export function resetImageStore() {
@@ -72,6 +94,7 @@ export function restoreImages(snapshot) {
 }
 
 export function registerImage(dataUri, alt = "") {
+  dataUri = normalizeImageDataUri(dataUri, alt);
   for (const [id, item] of map) {
     if (item.dataUri === dataUri) return `@img:${id}:${item.filename}`;
   }
@@ -157,7 +180,7 @@ export function isDocImageLight(md) {
 export function shrinkMarkdown(md) {
   if (!md) return "";
   // 短路：没有 base64 图片时直接返回，避免对整个大文档做正则扫描（大文档每键都走这里）
-  if (md.indexOf("data:image/") === -1) return md;
+  if (md.indexOf("data:image/") === -1 && md.indexOf("data:application/octet-stream") === -1) return md;
   return md.replace(BASE64_IMG_RE, (match, alt, dataUri) => {
     const ph = registerImage(dataUri, alt);
     return `![${alt}](${ph})`;

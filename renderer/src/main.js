@@ -1088,7 +1088,7 @@ async function openConvertedFile(filePath) {
     // #8：转换后的文档若含图片，编辑器会把大图折叠成 @img 占位符。
     // 若图片总字节超阈值（与渲染时 isDocImageLight 同一判定），提示用户图片已折叠。
     try {
-      if (data.markdown && data.markdown.indexOf("data:image/") !== -1) {
+      if (data.markdown && /data:(?:image\/|application\/octet-stream;base64,)/.test(data.markdown)) {
         const shrunk = shrinkMarkdown(data.markdown);
         if (!isDocImageLight(shrunk)) showImageFoldTip();
       }
