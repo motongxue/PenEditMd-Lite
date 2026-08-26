@@ -220,6 +220,7 @@ async function init() {
   } else {
     document.documentElement.classList.add("light");
   }
+  updateThemeButton();
 
   // 恢复侧栏折叠状态（与主题一样持久化在 localStorage）
   if (localStorage.getItem("sidebar-collapsed") === "1") {
@@ -449,6 +450,22 @@ function safeBind(fn) {
   }
 }
 
+/* ---------- 明暗主题切换（轻量版：仅浅色/深色两档） ---------- */
+function toggleTheme() {
+  const nowLight = document.documentElement.classList.toggle("light");
+  localStorage.setItem("theme", nowLight ? "light" : "dark");
+  updateThemeButton();
+  // 图表配色跟随主题
+  try { reinitMermaid(); } catch (_) {}
+}
+/** 刷新工具栏主题按钮的图标/标题，反映当前模式 */
+function updateThemeButton() {
+  if (!els.btnTheme) return;
+  const isLight = document.documentElement.classList.contains("light");
+  els.btnTheme.textContent = isLight ? "🌙" : "☀️";
+  els.btnTheme.title = isLight ? "切换为深色主题" : "切换为浅色主题";
+}
+
 function bindEvents() {
   els.btnOpen.addEventListener("click", openFiles);
   els.btnOpen3.addEventListener("click", openFiles);
@@ -461,7 +478,7 @@ function bindEvents() {
   // 这里不要再直接绑 exportMarkdown，否则点击时会"既展开菜单又直接弹出 MD 另存对话框"。
   els.btnClear.addEventListener("click", clearAll);
   els.btnToggle.addEventListener("click", toggleSidebar);
-  // 轻量版已移除「主题」按钮：原 els.btnTheme 元素已不存在，跳过绑定，避免 null.addEventListener 抛错中断后续所有事件绑定。
+  els.btnTheme.addEventListener("click", toggleTheme);
   els.btnFocus.addEventListener("click", toggleFocus);
   els.btnRich.addEventListener("click", () => switchEditorType("richtext"));
   els.btnSource.addEventListener("click", () => switchEditorType("source"));
