@@ -22,7 +22,7 @@ import { getImageById, isDocImageLight } from "./imageStore.js";
 import { useMathExtensions, decorateMath } from "./math.js";
 import { useFootnoteExtensions, assignHeadingIds } from "./extras.js";
 import mermaid from "mermaid";
-import { perfStage, perfSlow } from "./perf.js";
+import { perfStage, perfSlow, perfSelf } from "./perf.js";
 
 marked.setOptions({
   gfm: true,
@@ -340,14 +340,17 @@ export async function renderMarkdownInto(container, md) {
 
   if (token !== renderToken) return;
   const savedScroll = container.scrollTop; // 重渲染前记录滚动位置，渲染后还原，避免回到顶部
+  const _tr = performance.now();
   container.replaceChildren(...nextNodes);
   container._secNodes = nextNodes;
   container._secHash = nextHash;
   finalizeTOC(container);
+  perfSelf("preview: replaceChildren+finalizeTOC", performance.now() - _tr);
   perfStage("finalizeTOC done");
   container.scrollTop = savedScroll;
   perfStage("mermaid render start");
   await renderMermaidIn(container); // 渲染 Mermaid 图（异步，不阻塞主渲染）
   perfStage("mermaid render done");
   perfStage("renderMarkdownInto done(" + sections.length + " sections)");
+  perfSelf("renderMarkdownInto(总 " + (md || "").length + "字)", performance.now() - _t0);
 }

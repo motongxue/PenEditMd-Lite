@@ -937,22 +937,40 @@ const MIME_BY_EXT = {
 function sessionFile() {
   return path.join(app.getPath("userData"), "session.json");
 }
-ipcMain.handle("session:save", (event, payload) => {
+// 图片映射在主进程内存里缓存一份：首次保存从磁盘读一次，之后复用，避免每次保存都
+// readFileSync 整个 session.json（见下方 #打字卡顿 规避）。图片变化时由渲染端带上新值刷新。
+let _sessionImagesCache = null;
+// 串行化写，避免并发 save 交错（渲染端防抖 800ms，频率很低，这里只是兜底）
+let _sessionSaveChain = Promise.resolve();
+ipcMain.handle("session:save", async (event, payload) => {
   try {
     // payload 为新版对象 { files, images }；兼容旧版纯文件数组
     const toSave = payload && typeof payload === "object" && !Array.isArray(payload)
       ? payload
       : { files: payload || [] };
-    // 图片不随正文频繁保存：images 为 null 时保留磁盘上已有的图片映射，
-    // 避免每次打字都把全部 base64 经 IPC 序列化一遍、主线程被堵 ~500ms（见 #打字卡顿）。
+    // 图片不随正文频繁保存：images 为 null 时复用内存缓存（必要时才从磁盘读一次）；
+    // 不为 null 说明图片有变化，更新缓存。
     if (toSave.images == null) {
-      try {
-        const raw = fs.readFileSync(sessionFile(), "utf-8");
-        const prev = raw ? JSON.parse(raw) : null;
-        if (prev && prev.images) toSave.images = prev.images;
-      } catch (_) { /* 旧文件不存在/损坏则不带图片 */ }
+      if (_sessionImagesCache) {
+        toSave.images = _sessionImagesCache;
+      } else {
+        try {
+          const raw = fs.readFileSync(sessionFile(), "utf-8");
+          const prev = raw ? JSON.parse(raw) : null;
+          if (prev && prev.images) _sessionImagesCache = prev.images;
+          if (_sessionImagesCache) toSave.images = _sessionImagesCache;
+        } catch (_) { /* 旧文件不存在/损坏则不带图片 */ }
+      }
+    } else {
+      _sessionImagesCache = toSave.images;
     }
-    fs.writeFileSync(sessionFile(), JSON.stringify(toSave), "utf-8");
+    // 异步写，不阻塞主进程事件循环：原先 fs.writeFileSync 在杀软首次扫描 session.json
+    // 时会同步卡住主进程数秒，导致文件对话框/复制等依赖主进程的 IPC 一起卡。
+    const data = JSON.stringify(toSave);
+    _sessionSaveChain = _sessionSaveChain.then(() =>
+      fs.promises.writeFile(sessionFile(), data, "utf-8")
+    );
+    await _sessionSaveChain;
     return true;
   } catch (_) {
     return false;

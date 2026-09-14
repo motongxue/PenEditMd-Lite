@@ -12,7 +12,7 @@ import "../tmplComponents.css";
 import { createEditor } from "./editor.js";
 import { buildToolbar, setToolbarEnabled } from "./toolbar.js";
 import { renderMarkdownInto, bindAnchorClick, reinitMermaid, renderRawHtml } from "./preview.js";
-import { perfReset, perfStage } from "./perf.js";
+import { perfReset, perfStage, perfMark, perfSelf } from "./perf.js";
 import { expandMarkdown, getImageById, shrinkMarkdown, isDocImageLight, snapshotImages, restoreImages, replaceImage, registerImage } from "./imageStore.js";
 import { buildExportHtml } from "./exporter.js";
 import { setStatusSink } from "./status.js";
@@ -268,11 +268,13 @@ function sessionSnapshot() {
   return {
     files: (state.files || []).map((f) => ({
       name: f.name,
-      markdown: f.markdown || "",
+      // 存档前把内联 base64 图（data:image / data:application/octet-stream）收编为 @img 占位符，
+      // 同时登记进 imageStore，使快照文字体积从数 MB 降到几 KB，避免每 2.5s 一次的大 payload IPC 卡顿。
+      markdown: shrinkMarkdown(f.markdown || ""),
       path: f.path || null,
       error: f.error || null,
       dirty: !!f.dirty,
-      savedMd: f.savedMd || (f.markdown || ""),
+      savedMd: shrinkMarkdown(f.savedMd || (f.markdown || "")),
       theme: f.theme || null,
       themeId: f.themeId || null,
       aiLayoutHistory: f.aiLayoutHistory || [],
@@ -286,8 +288,12 @@ function scheduleSessionSave() {
   if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
   sessionSaveTimer = setTimeout(() => {
     sessionSaveTimer = null;
+    const t0 = performance.now();
     const snap = sessionSnapshot();
-    const snapBytes = JSON.stringify(snap).length;
+    perfSelf("sessionSnapshot()", performance.now() - t0);
+    const t1 = performance.now();
+    const snapBytes = JSON.stringify(snap).length; // 临时埋点：仅为打印大小，测完可去掉（重复序列化）
+    perfSelf("JSON.stringify(snap) 字节统计", performance.now() - t1);
     const imgCount = snap.images && snap.images.images ? snap.images.images.length : 0;
     perfStage(`sessionSave → IPC(payload=${snapBytes}B, images=${imgCount}${snap.images ? "" : ",图片未变跳过"})`);
     try {
@@ -1312,6 +1318,7 @@ let uiRefreshTimer = null;
 let pendingUiMd = null;
 
 function onEditorChange(md) {
+  perfMark("main:onEditorChange");
   const f = activeFile();
   if (!f || f.error) return;
   // 基础状态更新（轻量，必须即时）：正文、dirty、版本号
@@ -1320,6 +1327,8 @@ function onEditorChange(md) {
   // Ctrl+S 才保存。草稿仅在保存/关闭时写入，用于崩溃恢复。
   f.dirty = md !== f.savedMd;
   docVersion++; // 文档变了：查找缓存 / 富文本文本映射需要重建
+  invalidateScrollCache(els.rich); // 编辑器高度随输入变化，下次滚动同步重算自身 scrollHeight
+  invalidateScrollCache(els.source);
   scheduleRender();
   // 打字 / 组词活跃期：延迟所有派生 UI 刷新，避免重绘打断 IME
   const typing = window.__peneditComposing || (lastEditorInputAt ? Date.now() - lastEditorInputAt < UI_IDLE : false);
@@ -1347,6 +1356,7 @@ function scheduleUiRefresh(md) {
 
 // 真正执行派生 UI 刷新（非打字期调用，或停手后由 scheduleUiRefresh 补刷）
 function flushUiRefresh(md) {
+  perfMark("main:flushUiRefresh");
   const f = activeFile();
   if (!f || f.error) return;
   // 用户没手动命名时，随首行内容自动更新文件名
@@ -1671,8 +1681,10 @@ function setMode(mode) {
     .forEach((s) => s.classList.toggle("active", s.dataset.mode === mode));
   if (mode !== "preview") editor.focus();
   if (mode === "split") {
-    // 从单栏切回分屏时先渲染再对齐一次，避免两边位置不一致
-    renderPreview().then(() => requestAnimationFrame(syncScrollFromEditor));
+    // 从单栏切回分屏时先渲染预览；不再强制把预览滚动对齐到编辑区。
+    // 此前这里硬调 syncScrollFromEditor，会读 scrollHeight 触发一次性重排（约 600ms+），
+    // 正是「第一行有点卡」的根源。分屏后如需对齐，用户滚轮一下即可（见 attachScrollSync）。
+    renderPreview();
   } else if (mode === "preview") {
     // 切到预览（无编辑区）：隐藏选区样式条，避免残留浮在预览上
     const sb = document.getElementById("sel-style-bar");
@@ -1797,6 +1809,7 @@ function isLargeDoc() {
 let lastEditorInputAt = 0;
 
 function scheduleRender() {
+  perfMark("main:scheduleRender");
   if (window.__peneditComposing) { renderDirty = true; return; } // 组词期绝不重渲染预览：renderPreview 内部会二次拦截
   clearTimeout(renderTimer);
   const base = isLargeDoc() ? 450 : 180;
@@ -1807,6 +1820,8 @@ function scheduleRender() {
   renderTimer = setTimeout(renderPreview, delay);
 }
 async function renderPreview() {
+  const _rp0 = performance.now();
+  perfMark("main:renderPreview");
   perfStage("renderPreview start");
   if (window.__peneditComposing) { renderDirty = true; return; } // 中文组词期不渲染预览：DOM 重绘会打断候选窗
   if (state.mode === "source") return; // 仅编辑区时不渲染，省性能
@@ -1856,12 +1871,14 @@ async function renderPreview() {
     // 否则链接/图片插入后整篇会跳回顶部。滚动联动由用户手动滚动的监听负责。
   } finally {
     rendering = false;
+    invalidateScrollCache(els.preview); // 预览高度已变，下次滚动同步需用新 scrollHeight
     if (state.mode !== "source") setStatus("就绪");
     if (renderDirty) {
       renderDirty = false;
       scheduleRender();
     }
   }
+  perfSelf("renderPreview(总)", performance.now() - _rp0);
 }
 
 /* ---------- 滚动联动（分屏：编辑区 ⇄ 预览） ----------
@@ -1876,18 +1893,59 @@ async function renderPreview() {
 let scrollOwner = null;
 let scrollOwnerTimer = null;
 
+// 用户主动滚动闸门：只有当滚动是由「鼠标滚轮 / 触控板 / 拖滚动条」这类用户手势产生时
+// 才做分屏联动；打字时光标自动滚入视野、程序化 scrollTop 设置等「非用户意图」的滚动
+// 一律跳过，避免每次按键都触发 scrollSync → 读 scrollHeight 强制重排 → 卡顿。
+// 此前 drive 只拦了中文组词(__peneditComposing)，普通打字照常触发，正是「没换行也卡」的根因。
+let _userScrollAt = 0;   // 最近一次用户滚轮/拖滚动条的时间戳
+let _scrollbarDrag = false; // 是否正在拖拽滚动条（mousedown 命中滚动条 → mouseup 释放）
+
+// 判断 mousedown 是否落在元素的滚动条区域（用于识别「拖滚动条」这种用户滚动意图）。
+function isOnScrollbar(el, e) {
+  const rect = el.getBoundingClientRect();
+  const vw = el.offsetWidth - el.clientWidth; // 垂直滚动条宽度
+  const hh = el.offsetHeight - el.clientHeight; // 水平滚动条高度
+  if (vw > 0 && e.clientX >= rect.right - vw) return true;
+  if (hh > 0 && e.clientY >= rect.bottom - hh) return true;
+  return false;
+}
+
+function isUserScrolling() {
+  return _scrollbarDrag || Date.now() - _userScrollAt < 250;
+}
+
+/* 滚动联动性能关键：scrollHeight 读取会强制同步布局（reflow）。
+ * 打字 / 连续滚动时若每次 scroll 事件都读 scrollHeight，会与输入法 / 渲染抢主线程，
+ * 造成 1~2s 卡顿（日志中 scrollSync 出现 +1181ms / +2115ms 尖刺即此）。
+ * 这里缓存每个容器的「最大可滚动距离」，仅在内容变化（渲染完成 / resize / 图片加载）
+ * 时失效重算；滚动过程中只读不触发 reflow 的 scrollTop。 */
+const _maxScrollCache = new WeakMap();
+function maxScroll(el, recompute) {
+  if (recompute || !_maxScrollCache.has(el)) {
+    _maxScrollCache.set(el, Math.max(0, el.scrollHeight - el.clientHeight));
+  }
+  return _maxScrollCache.get(el);
+}
+function invalidateScrollCache(el) {
+  if (el) _maxScrollCache.delete(el);
+}
+
 function activeEditorEl() {
   return els.source.classList.contains("hidden") ? els.rich : els.source;
 }
 
 function syncFromTo(from, to) {
-  perfStage("scrollSync(" + from.className + "→" + to.className + ")");
-  const fMax = from.scrollHeight - from.clientHeight;
-  const tMax = to.scrollHeight - to.clientHeight;
-  if (tMax <= 0) return;
-  const ratio = fMax > 0 ? from.scrollTop / fMax : 0;
-  const target = Math.round(ratio * tMax);
-  if (Math.abs(to.scrollTop - target) > 1) to.scrollTop = target;
+  perfMark("scrollSync(" + from.className + "→" + to.className + ")");
+  const t0 = performance.now();
+  const fMax = maxScroll(from); // 编辑器高度随输入变化，onEditorChange 已失效缓存并重算
+  const tMax = maxScroll(to); // 预览高度仅渲染/图片加载时变，缓存避免每次滚动读 scrollHeight
+  if (tMax > 0) {
+    const ratio = fMax > 0 ? from.scrollTop / fMax : 0;
+    const target = Math.round(ratio * tMax);
+    if (Math.abs(to.scrollTop - target) > 1) to.scrollTop = target;
+  }
+  // 测真实自耗时（不被「上一条日志间隔」污染），复测看 self=+Xms 即可判断是否真的卡
+  perfSelf("scrollSync(" + from.className + "→" + to.className + ")", performance.now() - t0);
 }
 
 /** 编辑区变化后把预览滚到相同比例（切换模式、插入内容后对齐用） */
@@ -1896,21 +1954,57 @@ function syncScrollFromEditor() {
   syncFromTo(activeEditorEl(), els.preview);
 }
 
+let _scrollRaf = 0;
+let _scrollPending = null;
 function attachScrollSync() {
+  const flush = () => {
+    _scrollRaf = 0;
+    if (!_scrollPending) return;
+    const { from, getTo } = _scrollPending;
+    _scrollPending = null;
+    if (from.classList.contains("hidden")) return;
+    if (window.__peneditComposing) return; // 中文组词期不做滚动联动
+    if (!isUserScrolling()) return; // 仅用户主动滚动才联动，跳过打字/程序化滚动
+    syncFromTo(from, getTo());
+  };
   const drive = (from, getTo) => () => {
     if (state.mode !== "split") return; // 非分屏没有联动的必要
     if (from.classList.contains("hidden")) return;
-    if (window.__peneditComposing) return; // 中文组词期不做滚动联动：syncFromTo 会读 scrollHeight（强制布局），与输入法抢主线程
+    if (window.__peneditComposing) return; // 中文组词期不做滚动联动
+    if (!isUserScrolling()) return; // 仅用户主动滚动（滚轮/拖滚动条）才联动；打字时光标自动滚动跳过
     if (scrollOwner && scrollOwner !== from) return; // 这次滚动是被对方带动的，忽略
     scrollOwner = from;
     clearTimeout(scrollOwnerTimer);
-    syncFromTo(from, getTo());
     scrollOwnerTimer = setTimeout(() => (scrollOwner = null), 120);
+    // 注意：滚动过程中元素 scrollHeight 不变，此处【不能】invalidateScrollCache，
+    // 否则缓存被每个 scroll 事件清空 → maxScroll 每次重读 scrollHeight 强制 reflow。
+    // 缓存只在内容/布局变化时失效（onEditorChange / 渲染完成 / 图片加载 / resize 已处理）。
+    // 合并同一帧内的多次 scroll 事件，避免每个事件都触发一次同步
+    _scrollPending = { from, getTo };
+    if (!_scrollRaf) _scrollRaf = requestAnimationFrame(flush);
   };
+
+  // 用户主动滚动意图：滚轮 / 触控板 → 标记时间戳；拖滚动条 → mousedown 命中滚动条区域
+  [els.source, els.rich, els.preview].forEach((el) => {
+    el.addEventListener("wheel", () => { _userScrollAt = Date.now(); }, { passive: true });
+    el.addEventListener("mousedown", (e) => {
+      if (isOnScrollbar(el, e)) { _scrollbarDrag = true; _userScrollAt = Date.now(); }
+    });
+  });
+  window.addEventListener("mouseup", () => { _scrollbarDrag = false; });
 
   els.source.addEventListener("scroll", drive(els.source, () => els.preview), { passive: true });
   els.rich.addEventListener("scroll", drive(els.rich, () => els.preview), { passive: true });
   els.preview.addEventListener("scroll", drive(els.preview, activeEditorEl), { passive: true });
+  // 预览内图片加载完会改变高度 → 失效缓存，下次同步用新高度
+  els.preview.addEventListener("load", (e) => {
+    if (e.target && e.target.tagName === "IMG") invalidateScrollCache(els.preview);
+  }, true);
+  window.addEventListener("resize", () => {
+    invalidateScrollCache(els.source);
+    invalidateScrollCache(els.rich);
+    invalidateScrollCache(els.preview);
+  });
 }
 function currentMarkdown() {
   const f = activeFile();
@@ -2167,10 +2261,12 @@ function bindThemeUI() {
   }
   const tipClose = document.getElementById("export-tip-close");
   if (tipClose) tipClose.addEventListener("click", hideExportTip);
-  bindComponentsUI();
-  bindSelectionStyleBar();
-  bindAiUI();
-  bindAiModelSwitcher();
+  // 精简版删除了部分 UI（组件库 / 选区样式 / AI），其子绑定可能引用已不存在的元素，
+  // 各自 safeBind 隔离，单处失败不影响其余界面交互，也避免顶层抛错。
+  safeBind(bindComponentsUI);
+  safeBind(bindSelectionStyleBar);
+  safeBind(bindAiUI);
+  safeBind(bindAiModelSwitcher);
 }
 
 /* ---------- 排版组件库弹层（光标处插入，保焦；悬停展开，与窗口同款样式） ---------- */
@@ -2540,6 +2636,7 @@ function bindExportMenu() {
  *  且导出菜单被限制为仅「长图 / HTML」；再次点击退出该模式、恢复全部导出。
  *  （即便不开启该模式，只要当前文档含组件或已套主题，导出也只允许长图 / HTML，见 #189） */
 function bindPublishMenu() {
+  if (!els.btnPublish) return; // 轻量版已移除公众号发布按钮：避免 null.addEventListener
   // #btn-publish 作为下拉触发器：展开「手动排版 / AI 排版 / 空」
   els.btnPublish.addEventListener("mousedown", (e) => e.preventDefault());
   // 鼠标移到「文章排版」按钮上即展开下拉；移出后稍候收起
