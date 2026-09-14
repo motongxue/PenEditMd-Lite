@@ -13,7 +13,7 @@ import { createEditor } from "./editor.js";
 import { buildToolbar, setToolbarEnabled } from "./toolbar.js";
 import { renderMarkdownInto, bindAnchorClick, reinitMermaid, renderRawHtml } from "./preview.js";
 import { perfReset, perfStage, perfMark, perfSelf } from "./perf.js";
-import { expandMarkdown, getImageById, shrinkMarkdown, isDocImageLight, snapshotImages, restoreImages, replaceImage, registerImage } from "./imageStore.js";
+import { expandMarkdown, getImageById, shrinkMarkdown, isDocImageLight, snapshotImages, snapshotImagesForMarkdown, restoreImages, replaceImage, registerImage } from "./imageStore.js";
 import { buildExportHtml } from "./exporter.js";
 import { setStatusSink } from "./status.js";
 import { bindEditorContextMenu } from "./editorMenu.js";
@@ -242,10 +242,7 @@ async function init() {
   }
   checkBackend();
   try { wireAlertModal(); } catch (e) { console.error("init: wireAlertModal", e); }
-  try { bindPreviewAiBar(); } catch (e) { console.error("init: bindPreviewAiBar", e); }
-  try { bindAiHistoryToolbar(); } catch (e) { console.error("init: bindAiHistoryToolbar", e); }
-  try { bindPreviewImageInsert(); } catch (e) { console.error("init: bindPreviewImageInsert", e); }
-  try { bindAiPreviewEditing(); } catch (e) { console.error("init: bindAiPreviewEditing", e); }
+  // AI 相关 UI 已从 lightweight 分支移除，不再挂接对应绑定
   updateCharCount();
 }
 
@@ -266,19 +263,31 @@ function restoreOrCreateBlank() {
    ============================================================ */
 function sessionSnapshot() {
   return {
-    files: (state.files || []).map((f) => ({
-      name: f.name,
+    files: (state.files || []).map((f) => {
       // 存档前把内联 base64 图（data:image / data:application/octet-stream）收编为 @img 占位符，
       // 同时登记进 imageStore，使快照文字体积从数 MB 降到几 KB，避免每 2.5s 一次的大 payload IPC 卡顿。
-      markdown: shrinkMarkdown(f.markdown || ""),
-      path: f.path || null,
-      error: f.error || null,
-      dirty: !!f.dirty,
-      savedMd: shrinkMarkdown(f.savedMd || (f.markdown || "")),
-      theme: f.theme || null,
-      themeId: f.themeId || null,
-      aiLayoutHistory: f.aiLayoutHistory || [],
-    })),
+      const md = shrinkMarkdown(f.markdown || "");
+      const savedMd = shrinkMarkdown(f.savedMd || (f.markdown || ""));
+      // 图片按文档懒加载：活动文档从内存 map 现算自己的图片子集（md + savedMd 并集，
+      // 防止刚删图后回退到 savedMd 时占位符失效）；非活动文档沿用 f.images（磁盘已有），
+      // 因其图片未恢复进 map，现算会得到空子集，会抹掉磁盘数据。
+      const docImages =
+        f.id === state.activeId
+          ? snapshotImagesForMarkdown(md + "\n" + savedMd)
+          : f.images || null;
+      return {
+        name: f.name,
+        markdown: md,
+        path: f.path || null,
+        error: f.error || null,
+        dirty: !!f.dirty,
+        savedMd,
+        theme: f.theme || null,
+        themeId: f.themeId || null,
+        images: docImages,
+      };
+    }),
+    // 顶层仍带全量图片快照（imagesDirty 门控，未变化返回 null）：供主进程整包落盘与缓存复用
     images: snapshotImages(),
   };
 }
@@ -311,14 +320,13 @@ async function restoreSession() {
   } catch (_) {
     snap = null;
   }
-  // 兼容旧版 session.json（纯文件数组）
+  // 兼容旧版 session.json（纯文件数组 / 顶层全局 images）
   let files = [];
+  const legacyImages = snap && !Array.isArray(snap) && snap.images ? snap.images : null;
   if (Array.isArray(snap)) {
     files = snap;
   } else if (snap && Array.isArray(snap.files)) {
     files = snap.files;
-    // 恢复 @img:id:name 对应的 base64 映射，否则占位图点击会报“已丢失”
-    restoreImages(snap.images);
   }
   if (!files.length) {
     restoreOrCreateBlank();
@@ -334,7 +342,10 @@ async function restoreSession() {
       f.savedMd = s.savedMd || md;
       f.theme = s.theme || null;
       f.themeId = s.themeId || null;
-      f.aiLayoutHistory = s.aiLayoutHistory || [];
+      // 每篇文档只携带自己引用的图片（轻量分支按文档懒加载）：
+      // 新格式每篇自带 images 子集（可能为 null=无图），仅在旧格式（字段不存在）时回退顶层全量 legacyImages；
+      // 不能用 `s.images || legacyImages`——否则新格式无图文档会误回退全量，懒加载失效。
+      f.images = s.images !== undefined ? s.images : legacyImages;
     }
   });
   if (state.files.length) selectFile(state.files[0].id);
@@ -1221,6 +1232,9 @@ function selectFile(id) {
   if (f) {
     state.activeTheme = f.theme || null;
     state.activeThemeId = f.themeId || null;
+    // 图片按文档懒加载：切到哪篇才把哪篇的图片子集恢复进全局映射，
+    // 其余文档的图片等切到对应标签时再恢复，避免启动时把所有会话的图片装进内存。
+    if (f.images) restoreImages(f.images);
   }
   hideImageFoldTip();
   hideExportTip();
@@ -2265,8 +2279,6 @@ function bindThemeUI() {
   // 各自 safeBind 隔离，单处失败不影响其余界面交互，也避免顶层抛错。
   safeBind(bindComponentsUI);
   safeBind(bindSelectionStyleBar);
-  safeBind(bindAiUI);
-  safeBind(bindAiModelSwitcher);
 }
 
 /* ---------- 排版组件库弹层（光标处插入，保焦；悬停展开，与窗口同款样式） ---------- */
@@ -4090,7 +4102,15 @@ function bindBlockFormatHint() {
   }
   function hide() {
     tip.classList.add("hidden");
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   }
+
+  // 鼠标停止移动 700ms 后自动隐藏：浮标只在移动过程中短暂显示，不再一直停留在屏幕上
+  let hideTimer = null;
+  const scheduleHide = () => {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => { hideTimer = null; hide(); }, 700);
+  };
 
   root.addEventListener("mousemove", (e) => {
     if (state.editorType !== "richtext") {
@@ -4105,7 +4125,7 @@ function bindBlockFormatHint() {
     }
     const info = classify(el);
     if (!info) hide();
-    else show(info, e.clientX, e.clientY);
+    else { show(info, e.clientX, e.clientY); scheduleHide(); }
   });
   root.addEventListener("mouseleave", hide);
 }

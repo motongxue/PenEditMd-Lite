@@ -84,13 +84,40 @@ export function snapshotImages() {
 /** 会话恢复用：从快照还原图片映射（与 @img:id:name 占位符对应） */
 export function restoreImages(snapshot) {
   if (!snapshot) return;
-  if (typeof snapshot.nextId === "number") nextId = snapshot.nextId;
+  // nextId 只增不减：按文档懒加载时各文档恢复顺序不定，
+  // 若用子集快照的 maxId+1 回退 nextId，新建图片可能撞上尚未恢复文档的旧 id（恢复时 map.set 会覆盖）。
+  if (typeof snapshot.nextId === "number") nextId = Math.max(nextId, snapshot.nextId);
   if (Array.isArray(snapshot.images)) {
     snapshot.images.forEach(({ id, filename, dataUri }) => {
       map.set(Number(id), { dataUri, filename });
     });
   }
   imagesDirty = false; // 刚从磁盘恢复，尚未改动，无需立刻回写
+}
+
+/**
+ * 按单篇 Markdown 中的 @img:id 引用，提取该文档「自己用到的」图片子集。
+ * 用于会话按文档懒加载：每篇文档只携带自己引用的图片，启动时仅恢复当前文档，
+ * 其余文档的图片等到切到该标签时才恢复，避免一次性把会话列表所有文档的图片装进内存。
+ * @returns {{nextId:number, images:Array<{id:number,filename:string,dataUri:string}>} | null}
+ */
+export function snapshotImagesForMarkdown(md) {
+  if (!md || md.indexOf("@img:") === -1) return null;
+  const re = /@img:(\d+):/g;
+  const ids = new Set();
+  let m;
+  while ((m = re.exec(md))) ids.add(Number(m[1]));
+  if (!ids.size) return null;
+  const images = [];
+  let maxId = 0;
+  ids.forEach((id) => {
+    const item = map.get(id);
+    if (item) {
+      images.push({ id, filename: item.filename, dataUri: item.dataUri });
+      if (id > maxId) maxId = id;
+    }
+  });
+  return { nextId: maxId + 1, images };
 }
 
 export function registerImage(dataUri, alt = "") {

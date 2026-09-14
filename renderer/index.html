@@ -199,10 +199,6 @@
           <button class="pub-w" data-w="640">中屏</button>
           <button class="pub-w" data-w="900">宽屏</button>
         </div>
-        <div class="pub-ai-toggle hidden" id="publish-ai-toggle">
-          <button type="button" class="pub-av active" data-ai-view="layout">AI 排版</button>
-          <button type="button" class="pub-av" data-ai-view="original">原文</button>
-        </div>
         <label class="pub-src"><input type="checkbox" id="publish-src-toggle" /> 看源码</label>
       </div>
       <div class="pub-stage">
@@ -218,24 +214,6 @@
         </div>
       </div>
     </div>
-  </div>
-
-  <!-- AI 排版进行中遮罩 -->
-  <div id="ai-busy" class="ai-busy hidden">
-    <div class="ai-busy-box">
-      <div class="ai-busy-spinner"></div>
-      <div class="ai-busy-text">正在排版中…</div>
-    </div>
-  </div>
-
-  <!-- AI 排版历史记录面板 -->
-  <div id="ai-history-panel" class="ai-history-panel hidden">
-    <div class="ahp-head">
-      <span>AI 排版历史</span>
-      <span class="ahp-clear" id="ai-history-clear" title="清空当前文档的全部历史">清空</span>
-    </div>
-    <div class="ahp-list" id="ai-history-list"></div>
-    <div class="ahp-foot">点击任一条可恢复到预览；右侧 × 删除该条</div>
   </div>
 
   <!-- 通用提示弹窗（AI 排版字数/图片拦截等） -->
