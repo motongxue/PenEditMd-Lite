@@ -137,20 +137,6 @@
           </div>
           <div id="resizer" class="resizer" title="拖动调整宽度"></div>
           <div class="pane pane-preview">
-            <!-- AI 排版分屏预览工具条（生成后显示在预览区顶部，替代弹出预览） -->
-            <div id="preview-ai-bar" class="preview-ai-bar hidden">
-              <div class="pab-toggle">
-                <button type="button" class="pab-av active" data-ai-view="layout">AI 排版</button>
-                <button type="button" class="pab-av" data-ai-view="original">原文</button>
-              </div>
-              <span class="pab-spacer"></span>
-              <button type="button" id="preview-ai-edit" class="pab-btn active" title="开启后可直接在预览里改文字；复制 / 保存 / 推送都用改后的内容">✏️ 可编辑</button>
-              <button type="button" id="preview-ai-history" class="pab-btn" title="查看 AI 排版历史记录">历史</button>
-              <button type="button" id="preview-ai-copy" class="pab-btn" title="复制排版 HTML 到剪贴板（去公众号后台 Ctrl+V）">复制 HTML</button>
-              <button type="button" id="preview-ai-push" class="pab-btn" title="直接推送到微信公众号草稿箱（需先在 设置 → 公众号推送 填凭证）">推送公众号</button>
-              <button type="button" id="preview-ai-save" class="pab-btn" title="保存排版 HTML 到本地文件">保存 HTML</button>
-              <button type="button" id="preview-ai-close" class="pab-btn ghost" title="退出 AI 排版预览，恢复正文预览">✕</button>
-            </div>
             <div id="preview" class="preview markdown-body"></div>
           </div>
         </div>
@@ -230,27 +216,6 @@
     </div>
   </div>
 
-  <!-- AI 排版主题选择弹窗（可选：选主题 / 让 AI 决定） -->
-  <div id="ai-theme-modal" class="modal hidden">
-    <div class="modal-card ai-theme-card">
-      <div class="modal-head">
-        <span>AI 排版 · 选择主题</span>
-        <div class="modal-head-actions">
-          <button id="ai-theme-skip" class="tbtn ai-theme-skip-btn" title="让 AI 按文章自行选择最契合主题">让 AI 决定</button>
-          <button id="ai-theme-close" type="button" title="关闭">✕</button>
-        </div>
-      </div>
-      <div class="ai-theme-body">
-        <div class="ai-theme-hint">选一套主题让 AI 按此风格排版；或点「让 AI 决定」由 AI 按文章智能选择（也可不选）。</div>
-        <label class="ai-opt-row" title="勾选：由 AI 自行判断在哪些位置插入可点击的虚线占位块；同时你也可以在正文中写【插入描述】主动指定位置。占位块在预览里点一下即可替换为真实图片。取消勾选：AI 不自动插图位，仅保留你显式写的【插入描述】标记">
-          <input type="checkbox" id="ai-img-ph" checked />
-          <span>插入图片占位块（图片位置交给 AI 定）</span>
-        </label>
-        <div id="ai-theme-grid" class="ai-theme-grid"></div>
-      </div>
-    </div>
-  </div>
-
   <!-- 主题选择弹窗（参考秀米组件化 + 135 一键配色 / 分类） -->
   <div id="theme-modal" class="modal hidden">
     <div class="modal-card theme-card-lg">
@@ -296,20 +261,7 @@
     <button type="button" data-act="quote" title="引用">引用</button>
     <button type="button" data-act="list" title="列表">列表</button>
     <button type="button" data-act="bold" title="加粗">B</button>
-    <button type="button" data-act="ai" title="AI 处理（润色/改写/续写/翻译/摘要/标题标签）">AI ✨</button>
   </div>
-
-  <!-- 选区 AI 下拉菜单 -->
-  <div id="ai-menu" class="ai-menu hidden">
-    <button type="button" data-ai="polish">润色</button>
-    <button type="button" data-ai="rewrite">改写</button>
-    <button type="button" data-ai="continue">续写</button>
-    <button type="button" data-ai="translate">翻译</button>
-    <button type="button" data-ai="summary">摘要</button>
-    <button type="button" data-ai="title">自动标题 / 标签</button>
-    <button type="button" data-ai="layout">全文 AI 排版</button>
-  </div>
-
 
   <div id="overlay" class="overlay hidden">
     <div class="spinner"></div>
