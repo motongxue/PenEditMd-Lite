@@ -306,6 +306,7 @@ let renderToken = 0;
  */
 export async function renderMarkdownInto(container, md) {
   const token = ++renderToken; // 每次渲染自增；旧渲染在让出点检测到 token 变化即放弃
+  const _t0 = performance.now(); // 总耗时计时起点，供末尾 perfSelf 使用
   perfStage("renderMarkdownInto start(" + (md || "").length + "字)");
   const { sections, headings } = prepare(md);
   perfStage("prepare done(" + sections.length + " sections)");
