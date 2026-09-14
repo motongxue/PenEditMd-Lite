@@ -1,19 +1,19 @@
-# 笔削 PenEditMd
+# 笔削 PenEditMd-Lite（精简版）
 
-**本地优先的 Markdown 写作 · 转换 · 排版 · 发布工作台。**
+**本地优先的 Markdown 写作 · 转换 · 预览 · 导出 轻量工作台。**
 
-笔削是一个基于 Electron + 微软 [markitdown](https://github.com/microsoft/markitdown) 的桌面应用：既能把 PDF / Word / Excel / PPT / 图片 / 音视频 / 网页 / 电子书 等 30+ 种格式**一键转换为 Markdown**，也内置了富文本/源码双模式编辑、实时预览、文档树、桌面便签、AI 润色与排版，以及 Word / PDF / EPUB / PNG / 公众号 多格式导出与草稿推送。
+PenEditMd-Lite 是 [PenEditMd](https://github.com/motongxue/PenEditMd) 的精简派生版，基于 Electron + 微软 [markitdown](https://github.com/microsoft/markitdown)。它把 PDF / Word / Excel / PPT / 图片 / 音视频 / 网页 / 电子书 等 30+ 种格式**一键转换为 Markdown**，并内置双模式编辑、实时预览、文档树、图片内联与折叠、多格式导出。
 
-> 转换只是入口之一——笔削真正想做的是「写完 → 排好 → 发出去」一条龙。
+> 与原版相比，本精简版**去掉了 AI 排版、桌面便签、主题/组件生态与公众号草稿推送**，只保留「转换 → 编辑 → 预览 → 导出」这条核心写作链路，更加轻量、启动更快、依赖更少。
 
 ---
 
 ## 功能特性
 
 **转换**
-- 拖拽 / 选择 / 双击关联文件，自动识别并转换为 Markdown（经本地 Python 后端）
+- 拖拽 / 选择 / 双击关联文件，自动识别并转换为 Markdown（经本地 Python 后端，无需联网）
 - 支持 PDF、DOCX/DOC、PPTX/PPT、XLSX/XLS、HTML、CSV、JSON、XML、EPUB、MSG、ZIP、TXT/MD、图片（JPG/PNG…）、音频、RTF、ODT 等约 30 种格式
-- 图片自动内联为 base64，避免外部引用丢失
+- 图片自动内联为占位符管理，避免外部引用丢失
 
 **编辑**
 - 富文本（WYSIWYG）与源码双模式，可随时切换
@@ -21,18 +21,34 @@
 - 明暗主题切换（记忆偏好）、分屏 / 专注模式、查找替换、撤销重做
 - 选中文本浮动样式条 + 右键菜单，快速套用样式
 
-**AI 能力**
-- 行内 AI：润色 / 改写 / 续写 / 翻译 / 摘要 / 加标题标签（走可配置 LLM）
-- **AI 排版**：按 `gzh-design-skill` 方法论生成 100% 内联样式的微信公众号兼容 HTML，内置 12 套设计语言，可让 AI 自动选题
-- AI 密钥只在主进程代理转发，不进入页面脚本上下文
+**图片处理（增强）**
+- 从 Typora 等编辑器导入的 `.md`，其中**本地绝对路径图片**（`C:\...\xx.png`）会自动读取并内联显示
+- 单文档内嵌图片超过阈值（约 1.5MB）时自动折叠为占位符，编辑区不再卡顿；预览/导出时正常还原
+- 导出 Markdown 采用 **archive 策略**：把图片抽取到 `<目录>/assets/`，`.md` 改用相对路径引用，在 Typora / VS Code / Obsidian 中都能直接打开，不会再提示「文件过大」
 
 **文档组织**
-- **文档树**：挂载工作文件夹，直接打开 / 转换其中的文件，支持新建 / 重命名 / 删除（路径越界校验）
-- **桌面便签**：独立置顶透明浮窗，关掉主窗口也留在桌面，支持开机自启
+- **文档树**：挂载工作文件夹，直接打开 / 转换其中的文件，支持新建 / 重命名 / 删除（主进程做路径越界校验）
+- **会话列表右键**：对文件可「打开文件所在位置」「重命名」，方便在系统文件管理器里定位与整理
 
-**导出与发布**
+**导出**
 - Markdown (.md)、HTML (.html，内联样式+图片+字体)、PDF、PNG 长图、Word (.docx)、EPUB
-- 公众号：复制带格式 HTML、推送至公众号草稿箱
+- 复制当前 Markdown / 排版 HTML 到剪贴板，可粘到其它编辑器或公众号后台
+
+---
+
+## 与原版 PenEditMd 的差异
+
+本精简版**移除了**以下原版能力（代码与菜单均已删除）：
+
+| 已移除 | 说明 |
+|--------|------|
+| AI 排版 / AI 设置 | 不再内置 LLM 润色与公众号内联样式排版 |
+| 桌面便签 | 去掉独立置顶浮窗与开机自启 |
+| 主题 / 组件生态 | 不再内置多套设计语言与组件插入 |
+| 样式定制 | 去掉实时样式定制面板 |
+| 公众号草稿箱推送 | 仅保留「复制 HTML 到剪贴板」，删除草稿箱凭证配置与推送 |
+
+保留并持续打磨的是：转换引擎、双模式编辑、实时预览、图片内联/折叠、文档树、会话右键、明暗主题、多格式导出。
 
 ---
 
@@ -42,17 +58,16 @@
 ┌──────────────────────────────────────────────┐
 │ Electron 主进程  main.js                       │
 │  · 拉起/管理 Python 子进程，轮询 /health        │
-│  · 原生菜单、单实例锁、窗口与便签浮窗管理        │
-│  · 全部 IPC：文件/剪贴板/导出/文档树/便签/      │
-│    会话/AI 代理/微信推送/开机自启               │
+│  · 原生菜单、单实例锁、窗口管理                  │
+│  · 全部 IPC：文件/剪贴板/导出/文档树/会话        │
 └──────────┬───────────────────────┬───────────┘
            │ window.api (preload)  │  HTTP localhost:8765
            ▼                       ▼
 ┌──────────────────────┐   ┌──────────────────────────────────┐
 │ 渲染进程 (Vite 构建)   │   │ Python 后端 (FastAPI+markitdown)    │
 │ renderer/src/*.js     │   │ python-server/server.py            │
-│ 编辑/预览/文档树/便签/ │   │ 打包: PyInstaller → markitdown-    │
-│ AI 排版/导出/微信推送  │   │ server(.exe) (extraResources)      │
+│ 编辑/预览/文档树/导出/ │   │ 打包: PyInstaller → markitdown-    │
+│ 图片/主题             │   │ server(.exe) (extraResources)      │
 └──────────────────────┘   └──────────────────────────────────┘
 ```
 
@@ -79,21 +94,20 @@ markDownApp/
 │   └── build.py                # PyInstaller 打包脚本
 ├── renderer/
 │   ├── index.html              # 渲染层 HTML 外壳
-│   └── src/                    # 业务模块（main / richtext / preview /
-│                               #   docTree / stickyNotes / aiDesignSkill /
-│                               #   wechat / officeExport / exporter …）
+│   └── src/                    # 业务模块（main / editor / richtext /
+│                               #   preview / docTree / imageStore /
+│                               #   exporter / officeExport / settings …）
 ├── build/
 │   └── installer.nsh           # NSIS 自定义脚本（强杀残留进程释放文件锁）
 ├── scripts/
 │   └── setup-python.js         # 开发态 venv 一键初始化
-├── licenses/
-│   └── gzh-design-skill-LICENSE  # 内嵌 AGPL-3.0 组件许可证全文
+├── assets/                     # 应用图标等资源
 ├── LICENSE                     # 本项目 AGPL-3.0
 ├── THIRD-PARTY-LICENSES.md     # 第三方许可证明细
 └── README.md
 ```
 
-> 注：`renderer/app.js` 等为早期遗留文件，已不再被引用；构建产物在 `dist/renderer/`，安装包在 `dist-electron/`。
+> 注：构建产物在 `dist/renderer/`，安装包在 `dist-electron/`。
 
 ---
 
@@ -151,41 +165,6 @@ npm run build             # 再打安装包
 
 ---
 
-## AI 排版
-
-AI 排版把当前 Markdown 交给一个**兼容 OpenAI `/chat/completions` 的 LLM**，按 `gzh-design-skill` 方法论生成纯内联样式的公众号 HTML 片段。
-
-**使用前需在「设置 → AI 设置」配置**：接口地址、API Key、模型名（密钥仅在主进程代理转发）。
-
-**内置 12 套设计语言**（`renderer/assets/ai-layout/`）：
-- 原生 6 套（gzh-design-skill）：摸鱼绿、红白色系、石墨极简、留白禅意、摸鱼票据、橄榄手记
-- 移植 6 套（gzh-design-skill 生态）：极简蓝、暖纸墨、暗夜青、森语绿、绯红编、墨金雅
-
-排版结果可：分屏预览（可编辑）、复制 HTML、保存本地、或**推送至公众号草稿箱**。
-
----
-
-## 文档树与便签
-
-- **文档树**：侧栏挂载工作文件夹，点击 `.md/.txt` 直接打开，点击可转换格式（docx/pdf/xlsx/html/图片…）自动转成 Markdown 打开；支持新建 / 重命名 / 删除，主进程做路径越界校验防越权。
-- **便签**：独立置顶透明浮窗，关掉主窗口仍留在桌面；支持单条重命名、置顶、开机自启。便签内容持久化在用户目录。
-
----
-
-## 导出格式
-
-| 格式 | 说明 |
-|------|------|
-| Markdown (.md) | 文本另存 |
-| HTML (.html) | 完整独立文件（内联样式 + 图片 + KaTeX 字体 + Mermaid 运行时） |
-| PDF (.pdf) | 隐藏窗口打印导出 |
-| PNG 长图 (.png) | 整页截图（带尺寸上限保护） |
-| Word (.docx) | 生成 OOXML 部件打包 |
-| EPUB (.epub) | 按标题切章生成 EPUB3 |
-| 公众号 | 复制带格式 HTML / 推送草稿箱 |
-
----
-
 ## 转换后端 API
 
 Python 后端通过**本地 HTTP（默认端口 8765，可用环境变量 `MARKITDOWN_PORT` 覆盖）**通信：
@@ -232,7 +211,8 @@ Python 后端通过**本地 HTTP（默认端口 8765，可用环境变量 `MARKI
 本项目以 **GNU Affero General Public License v3 (AGPL-3.0)** 整体发布（根 `LICENSE`）。
 
 - 核心转换引擎 **Microsoft markitdown**：MIT（© Microsoft Corporation）
-- AI 排版组件库 **gzh-design-skill**：AGPL-3.0（© 甲木 × 摸鱼小李），全文见 `licenses/gzh-design-skill-LICENSE`
 - 前端 / 运行时依赖（marked、DOMPurify、KaTeX、Mermaid、highlight.js、Turndown、Electron、Chromium、Python 等）许可证见 `THIRD-PARTY-LICENSES.md`
 
-> 依据 AGPL-3.0：任何人获取到本软件的二进制（含安装包、在线服务），均有权获得其对应源代码。完整源码见公开仓库 https://github.com/motongxue/PenEditMd 。
+> 依据 AGPL-3.0：任何人获取到本软件的二进制（含安装包、在线服务），均有权获得其对应源代码。完整源码见公开仓库 https://github.com/motongxue/PenEditMd-Lite 。
+
+PenEditMd-Lite 为 PenEditMd 的派生作品，沿用其 AGPL-3.0 许可；版权声明见 `LICENSE` 文件头部。

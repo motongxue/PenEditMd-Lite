@@ -1,7 +1,7 @@
 {
   "name": "peneditmd",
   "version": "0.1.0",
-  "description": "PenEditMd：基于微软 markitdown 的桌面应用，把各种文件一键转换为 Markdown，并支持编辑/排版/导出",
+  "description": "PenEditMd-Lite：基于微软 markitdown 的轻量桌面应用，把各种文件一键转换为 Markdown，并支持编辑/预览/导出",
   "main": "main.js",
   "author": "WorkBuddy",
   "license": "AGPL-3.0",
